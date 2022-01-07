@@ -2,6 +2,8 @@ use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::collections::binary_heap::{BinaryHeap, PeekMut};
 use std::mem;
+use std::ops::{BitAndAssign, BitOrAssign, BitXorAssign, SubAssign};
+use retain_mut::RetainMut;
 
 use crate::bitmap::container::Container;
 use crate::bitmap::store::Store;
@@ -263,4 +265,151 @@ where
             None => RoaringBitmap::default(),
         }
     }
+}
+
+pub fn naive_multi_or_ref<'a>(i: impl IntoIterator<Item=&'a RoaringBitmap>) -> RoaringBitmap {
+    naive_lazy_multi_op_ref(i, |a, b| BitOrAssign::bitor_assign(a, b))
+}
+
+pub fn naive_multi_or_owned(i: impl IntoIterator<Item=RoaringBitmap>) -> RoaringBitmap {
+    naive_lazy_multi_op_owned(i, |a, b| BitOrAssign::bitor_assign(a, b))
+}
+
+pub fn naive_multi_and_ref<'a>(i: impl IntoIterator<Item=&'a RoaringBitmap>) -> RoaringBitmap {
+    naive_lazy_multi_op_ref(i, |a, b| BitAndAssign::bitand_assign(a, b))
+}
+
+pub fn naive_multi_and_owned(i: impl IntoIterator<Item=RoaringBitmap>) -> RoaringBitmap {
+    naive_lazy_multi_op_owned(i, |a, b| BitAndAssign::bitand_assign(a, b))
+}
+
+pub fn naive_multi_sub_ref<'a>(i: impl IntoIterator<Item=&'a RoaringBitmap>) -> RoaringBitmap {
+    naive_lazy_multi_op_ref(i, |a, b| SubAssign::sub_assign(a, b))
+}
+
+pub fn naive_multi_sub_owned(i: impl IntoIterator<Item=RoaringBitmap>) -> RoaringBitmap {
+    naive_lazy_multi_op_owned(i, |a, b| SubAssign::sub_assign(a, b))
+}
+
+pub fn naive_multi_xor_ref<'a>(i: impl IntoIterator<Item=&'a RoaringBitmap>) -> RoaringBitmap {
+    naive_lazy_multi_op_ref(i, |a, b| BitXorAssign::bitxor_assign(a, b))
+}
+
+pub fn naive_multi_xor_owned(i: impl IntoIterator<Item=RoaringBitmap>) -> RoaringBitmap {
+    naive_lazy_multi_op_owned(i, |a, b| BitXorAssign::bitxor_assign(a, b))
+}
+
+// and so on...
+
+
+#[inline]
+fn naive_lazy_multi_op_owned(bitmaps: impl IntoIterator<Item=RoaringBitmap>, op: fn(&mut Store, &Store)) -> RoaringBitmap {
+    let mut iter = bitmaps.into_iter();
+    let mut containers = match iter.next() {
+        None => Vec::new(),
+        Some(v) => v.containers
+    };
+
+    for bitmap in iter {
+        for mut rhs in bitmap.containers {
+            match containers.binary_search_by_key(&rhs.key, |c| c.key) {
+                Err(loc) => {
+                    containers.insert(loc, rhs)
+                },
+                Ok(loc) => {
+                    let lhs = &mut containers[loc];
+                    match (&lhs.store, &rhs.store) {
+                        (Store::Array(..), Store::Array(..)) => lhs.store = lhs.store.to_bitmap(),
+                        (Store::Array(..), Store::Bitmap(..)) => mem::swap(lhs, &mut rhs),
+                        (Store::Bitmap(..), _) => {}
+                    };
+                    op(&mut lhs.store, &rhs.store);
+                },
+            }
+        }
+    }
+
+    containers.retain_mut(|container| {
+        container.len = container.store.len();
+        container.ensure_correct_store();
+        container.len > 0
+    });
+
+    RoaringBitmap { containers }
+}
+
+#[inline]
+fn naive_lazy_multi_op_owned2(bitmaps: impl IntoIterator<Item=RoaringBitmap>, op: fn(&mut Store, &Store)) -> RoaringBitmap {
+    let mut iter = bitmaps.into_iter();
+    let mut containers = match iter.next() {
+        None => Vec::new(),
+        Some(v) => v.containers
+    };
+
+    for bitmap in iter {
+        for mut rhs in bitmap.containers {
+            match containers.binary_search_by_key(&rhs.key, |c| c.key) {
+                Err(loc) => {
+                    containers.insert(loc, rhs)
+                },
+                Ok(loc) => {
+                    let lhs = &mut containers[loc];
+                    match (&lhs.store, &rhs.store) {
+                        (Store::Array(..), Store::Array(..)) => {
+                            lhs.store = lhs.store.to_bitmap()
+                        },
+                        (Store::Array(..), Store::Bitmap(..)) => {
+                            mem::swap(lhs, &mut rhs)
+                        },
+                        (Store::Bitmap(..), _) => {}
+                        // No wildcard. This pattern will be non-exhaustive when runs are added
+                    };
+                    op(&mut lhs.store, &rhs.store);
+                },
+            }
+        }
+    }
+
+    containers.retain_mut(|container| {
+        container.len = container.store.len();
+        container.ensure_correct_store();
+        container.len > 0
+    });
+
+    RoaringBitmap { containers }
+}
+
+#[inline]
+fn naive_lazy_multi_op_ref<'a>(bitmaps: impl IntoIterator<Item=&'a RoaringBitmap>, op: fn(&mut Store, &Store)) -> RoaringBitmap {
+    let mut iter = bitmaps.into_iter();
+    let mut containers = match iter.next() {
+        None => Vec::new(),
+        Some(v) => v.containers.clone()
+    };
+
+    for bitmap in iter {
+        for rhs in &bitmap.containers {
+            match containers.binary_search_by_key(&rhs.key, |c| c.key) {
+                Err(loc) => {
+                    containers.insert(loc, rhs.clone())
+                },
+                Ok(loc) => {
+                    let lhs = &mut containers[loc];
+                    match lhs.store {
+                        Store::Array(..) => { lhs.store = lhs.store.to_bitmap() },
+                        Store::Bitmap(..) => {}
+                    }
+                    op(&mut lhs.store, &rhs.store);
+                },
+            }
+        }
+    }
+
+    containers.retain_mut(|container| {
+        container.len = container.store.len();
+        container.ensure_correct_store();
+        container.len > 0
+    });
+
+    RoaringBitmap { containers }
 }

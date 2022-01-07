@@ -84,7 +84,22 @@ fn multi_bitor() {
     let c: RoaringBitmap = (1_000_000..4_000_000).collect();
     let rbs = [a, b, c];
 
-    let res1 = rbs.bitor();
+    let res1 = rbs.clone().bitor();
+    let res2 = rbs.iter().cloned().reduce(|a, b| a | b).unwrap_or_default();
+
+    assert_eq!(res1, res2);
+}
+
+#[test]
+fn multi_bitor_simple() {
+    use roaring::bitmap::MultiBitOr;
+
+    let a: RoaringBitmap = (1..4).collect();
+    let b: RoaringBitmap = (1000..4000).collect();
+    let c: RoaringBitmap = (1_000_000..4_000_000).collect();
+    let rbs = [a, b, c];
+
+    let res1 = roaring::bitmap::naive_multi_or_ref(&rbs);
     let res2 = rbs.iter().cloned().reduce(|a, b| a | b).unwrap_or_default();
 
     assert_eq!(res1, res2);
@@ -117,7 +132,7 @@ fn multi_bitand() {
     let c: RoaringBitmap = (1300..4_000_000).collect();
     let rbs = [a, b, c];
 
-    let res1 = rbs.bitand();
+    let res1 = rbs.clone().bitand();
     let res2 = rbs.iter().cloned().reduce(|a, b| a & b).unwrap_or_default();
 
     assert_eq!(res1, res2);
@@ -147,7 +162,7 @@ fn multi_bitxor() {
     let c: RoaringBitmap = (1300..4_000_000).collect();
     let rbs = [a, b, c];
 
-    let res1 = rbs.bitxor();
+    let res1 = rbs.clone().bitxor();
     let res2 = rbs.iter().cloned().reduce(|a, b| a ^ b).unwrap_or_default();
 
     assert_eq!(res1, res2);
@@ -177,7 +192,7 @@ fn multi_sub() {
     let c: RoaringBitmap = (1300..4_000_000).collect();
     let rbs = [a, b, c];
 
-    let res1 = rbs.sub();
+    let res1 = rbs.clone().sub();
     let res2 = rbs.iter().cloned().reduce(|a, b| a - b).unwrap_or_default();
 
     assert_eq!(res1, res2);
