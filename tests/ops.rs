@@ -91,7 +91,7 @@ fn multi_bitor() {
 }
 
 #[test]
-fn multi_bitor_simple() {
+fn multi_bitor_naive_lazy() {
     use roaring::bitmap::MultiBitOr;
 
     let a: RoaringBitmap = (1..4).collect();

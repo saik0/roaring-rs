@@ -509,41 +509,70 @@ fn naive_lazy_multi_op_ref_hashmap<'a>(bitmaps: impl IntoIterator<Item=&'a Roari
 
 #[inline]
 fn naive_lazy_multi_op_cow<'a>(bitmaps: impl IntoIterator<Item=&'a RoaringBitmap>, op: fn(&mut Store, &Store)) -> RoaringBitmap {
-    let mut iter = bitmaps.into_iter();
+    // Problem statement.
+    //
+    // This algorithm operates on bitmaps. It must deal with arrays for which there are not (yet)
+    // any others with the same key.
+    //
+    //   1. Eager cloning would create useless intermediate values that might become bitmaps
+    //   2. Eager promoting forces disjoint containers to converted back to arrays at the end
+    //
+    // This strategy uses COW to lazily promote arrays to bitmaps as they are operated on.
+    // In testing with the becnmark datasets: The runtime difference was negligble, but it does
+    // have better memory characteristics.
 
+
+    // Phase 1. Borrow all the containers from the first element.
+    let mut iter = bitmaps.into_iter();
     let mut containers: Vec<Cow<Container>> = match iter.next() {
         None => Vec::new(),
         Some(v) => v.containers.iter().map(Cow::Borrowed).collect()
     };
 
+    // Phase 2: Operate on the remaining contaners
     for bitmap in iter {
         for rhs in &bitmap.containers {
             match containers.binary_search_by_key(&rhs.key, |c| c.key) {
                 Err(loc) => {
+                    // A container not currently in containers. Borrow it.
                     containers.insert(loc, Cow::Borrowed(rhs))
                 }
                 Ok(loc) => {
+                    // A container that is in containers. Operate on it.
                     let lhs = &mut containers[loc];
-                    match lhs.store {
-                        // without cloning the lhs array, create a bitmap from it
-                        Store::Array(..) => {
-                            let new_container = Container {
+                    match (&lhs.store, &rhs.store) {
+                        (Store::Array(..), Store::Array(..)) => {
+                            // We had borrowed an array. Without cloning it, create a new bitmap
+                            // Add all the elements to the new bitmap
+                            let mut new_container = Container {
                                 key: lhs.key,
                                 len: lhs.len,
-                                store: lhs.store.to_bitmap(),
+                                store: lhs.store.to_bitmap()
                             };
+                            op(&mut new_container.store, &rhs.store);
                             *lhs = Cow::Owned(new_container);
+                        },
+                        (Store::Array(..), Store::Bitmap(..)) => {
+                            // We had borrowed an array. Copy the rhs bitmap, add lhs to it
+                            let mut new_container = rhs.clone();
+                            op(&mut new_container.store, &lhs.store);
+                            *lhs = Cow::Owned(new_container);
+                        },
+                        (Store::Bitmap(..), _) => {
+                            // This might be a owned or borrowed bitmap.
+                            // If it was borrowed it will clone-on-write
+                            op(&mut lhs.to_mut().store, &rhs.store);
                         }
-                        Store::Bitmap(..) => {}
-                    }
-                    op(&mut lhs.to_mut().store, &rhs.store);
+                    };
                 }
             }
         }
     }
 
+    // Phase 3: Clean up
     let containers: Vec<Container> = containers.into_iter()
         .map(|c| {
+            // Any borrowed bitmaps or arrays left over get cloned here
             let mut container = c.into_owned();
             container.len = container.store.len();
             container.ensure_correct_store();
@@ -570,20 +599,29 @@ fn naive_lazy_multi_op_cow_btreemap<'a>(bitmaps: impl IntoIterator<Item=&'a Roar
         for rhs in &bitmap.containers {
             match containers.entry(rhs.key) {
                 BEntry::Vacant(entry) => { entry.insert(Cow::Borrowed(rhs)); }
-                BEntry::Occupied(mut entry) => {
-                    let lhs = entry.get_mut();
-                    match lhs.store {
-                        Store::Array(..) => {
-                            let new_container = Container {
+                BEntry::Occupied(entry) => {
+                    let lhs = entry.into_mut();
+                    match (&lhs.store, &rhs.store) {
+                        (Store::Array(..), Store::Array(..)) => {
+                            // We borrowed an array, and never had to clone it!
+                            let mut new_container = Container {
                                 key: lhs.key,
                                 len: lhs.len,
                                 store: lhs.store.to_bitmap(),
                             };
+                            op(&mut new_container.store, &rhs.store);
                             *lhs = Cow::Owned(new_container);
+                        },
+                        (Store::Array(..), Store::Bitmap(..)) => {
+                            // We borrowed an array, and never had to clone it!
+                            let mut new_container = rhs.clone();
+                            op(&mut new_container.store, &lhs.store);
+                            *lhs = Cow::Owned(new_container);
+                        },
+                        (Store::Bitmap(..), _) => {
+                            op(&mut lhs.to_mut().store, &rhs.store);
                         }
-                        Store::Bitmap(..) => {}
-                    }
-                    op(&mut lhs.to_mut().store, &rhs.store);
+                    };
                 }
             }
         }
@@ -617,20 +655,29 @@ fn naive_lazy_multi_op_cow_hashmap<'a>(bitmaps: impl IntoIterator<Item=&'a Roari
         for rhs in &bitmap.containers {
             match containers.entry(rhs.key) {
                 HEntry::Vacant(entry) => { entry.insert(Cow::Borrowed(rhs)); }
-                HEntry::Occupied(mut entry) => {
-                    let lhs = entry.get_mut();
-                    match lhs.store {
-                        Store::Array(..) => {
-                            let new_container = Container {
+                HEntry::Occupied(entry) => {
+                    let lhs = entry.into_mut();
+                    match (&lhs.store, &rhs.store) {
+                        (Store::Array(..), Store::Array(..)) => {
+                            // We borrowed an array, and never had to clone it!
+                            let mut new_container = Container {
                                 key: lhs.key,
                                 len: lhs.len,
                                 store: lhs.store.to_bitmap(),
                             };
+                            op(&mut new_container.store, &rhs.store);
                             *lhs = Cow::Owned(new_container);
+                        },
+                        (Store::Array(..), Store::Bitmap(..)) => {
+                            // We borrowed an array, and never had to clone it!
+                            let mut new_container = rhs.clone();
+                            op(&mut new_container.store, &lhs.store);
+                            *lhs = Cow::Owned(new_container);
+                        },
+                        (Store::Bitmap(..), _) => {
+                            op(&mut lhs.to_mut().store, &rhs.store);
                         }
-                        Store::Bitmap(..) => {}
-                    }
-                    op(&mut lhs.to_mut().store, &rhs.store);
+                    };
                 }
             }
         }
