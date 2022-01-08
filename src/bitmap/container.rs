@@ -6,7 +6,7 @@ use super::util;
 
 const ARRAY_LIMIT: u64 = 4096;
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Eq, Clone)]
 pub struct Container {
     pub key: u16,
     pub len: u64,

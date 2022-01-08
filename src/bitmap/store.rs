@@ -585,6 +585,8 @@ impl PartialEq for Store {
     }
 }
 
+impl Eq for Store {}
+
 impl Clone for Store {
     fn clone(&self) -> Self {
         match *self {

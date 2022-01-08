@@ -1,10 +1,12 @@
 mod datasets_paths;
+mod prefetched_datasets_paths;
 
 use std::cmp::Reverse;
 use std::num::ParseIntError;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
+use prefetched_datasets_paths::*;
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Bencher};
 use roaring::RoaringBitmap;
 
@@ -442,47 +444,86 @@ fn successive_or(c: &mut Criterion) {
 fn multi_bitor(c: &mut Criterion) {
     use roaring::bitmap::MultiBitOr;
 
-    let files = self::datasets_paths::WIKILEAKS_NOQUOTES_SRT;
-    let parsed_numbers = parse_dir_files(files).unwrap();
+    const data_dirs: &[&str] = &[
+        CENSUS1881_SRT,
+        CENSUS_INCOME_SRT,
+        WEATHER_SEPT_85_SRT,
+        WIKILEAKS_NOQUOTES_SRT,
+    ];
 
-    let bitmaps: Vec<_> = parsed_numbers
-        .into_iter()
-        .map(|(_, r)| r.map(RoaringBitmap::from_sorted_iter).unwrap())
-        .collect();
+    let datasets = data_dirs.iter().map(|files| {
+        let parsed_numbers = parse_dir_files(files).unwrap();
+        let bitmaps: Vec<_> = parsed_numbers
+            .into_iter()
+            .map(|(_, r)| r.map(RoaringBitmap::from_sorted_iter).unwrap())
+            .collect();
+        (files, bitmaps)
+    }).collect::<Vec<_>>();
 
-    let mut group = c.benchmark_group("Multi Or");
-
-    group.bench_function("Naive Lazy Ref", |b| {
-        b.iter(|| {
-            black_box(roaring::bitmap::naive_multi_or_ref(&bitmaps));
+    for (filename, bitmaps) in datasets {
+        let mut group = c.benchmark_group(format!("{}/Multi Or", filename));
+        group.bench_function("Naive Lazy Cow", |b| {
+            b.iter(|| {
+                black_box(roaring::bitmap::naive_multi_or_cow(&bitmaps));
+            });
         });
-    });
 
-    group.bench_function("Naive Lazy Owned", |b| {
-        b.iter_batched(
-            || bitmaps.clone(),
-            |bitmaps: Vec<RoaringBitmap>| {
-                black_box(roaring::bitmap::naive_multi_or_owned(bitmaps));
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.bench_function("Multi Or Ref", |b| {
-        b.iter(|| {
-            black_box(bitmaps.as_slice().bitor());
+        group.bench_function("Naive Lazy Cow BTreeMap", |b| {
+            b.iter(|| {
+                black_box(roaring::bitmap::naive_multi_or_cow_btreemap(&bitmaps));
+            });
         });
-    });
 
-    group.bench_function("Multi Or Owned", |b| {
-        b.iter_batched(
-            || bitmaps.clone(),
-            |bitmaps: Vec<RoaringBitmap>| {
-                black_box(bitmaps.bitor());
-            },
-            BatchSize::SmallInput,
-        );
-    });
+        group.bench_function("Naive Lazy Cow HashMap", |b| {
+            b.iter(|| {
+                black_box(roaring::bitmap::naive_multi_or_cow_hashmap(&bitmaps));
+            });
+        });
+
+        group.bench_function("Naive Lazy Ref", |b| {
+            b.iter(|| {
+                black_box(roaring::bitmap::naive_multi_or_ref(&bitmaps));
+            });
+        });
+
+        group.bench_function("Naive Lazy Ref BTreeMap", |b| {
+            b.iter(|| {
+                black_box(roaring::bitmap::naive_multi_or_ref_btreemap(&bitmaps));
+            });
+        });
+
+        group.bench_function("Naive Lazy Ref HashMap", |b| {
+            b.iter(|| {
+                black_box(roaring::bitmap::naive_multi_or_ref_hashmap(&bitmaps));
+            });
+        });
+
+        group.bench_function("Naive Lazy Owned", |b| {
+            b.iter_batched(
+                || bitmaps.clone(),
+                |bitmaps: Vec<RoaringBitmap>| {
+                    black_box(roaring::bitmap::naive_multi_or_owned(bitmaps));
+                },
+                BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_function("Multi Or Ref", |b| {
+            b.iter(|| {
+                black_box(bitmaps.as_slice().bitor());
+            });
+        });
+
+        group.bench_function("Multi Or Owned", |b| {
+            b.iter_batched(
+                || bitmaps.clone(),
+                |bitmaps: Vec<RoaringBitmap>| {
+                    black_box(bitmaps.bitor());
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
 }
 
 fn multi_bitand(c: &mut Criterion) {
@@ -534,47 +575,87 @@ fn multi_bitand(c: &mut Criterion) {
 fn multi_bitxor(c: &mut Criterion) {
     use roaring::bitmap::MultiBitXor;
 
-    let files = self::datasets_paths::WIKILEAKS_NOQUOTES_SRT;
-    let parsed_numbers = parse_dir_files(files).unwrap();
+    const data_dirs: &[&str] = &[
+        CENSUS1881_SRT,
+        CENSUS_INCOME_SRT,
+        WEATHER_SEPT_85_SRT,
+        WIKILEAKS_NOQUOTES_SRT,
+    ];
 
-    let bitmaps: Vec<_> = parsed_numbers
-        .into_iter()
-        .map(|(_, r)| r.map(RoaringBitmap::from_sorted_iter).unwrap())
-        .collect();
+    let datasets = data_dirs.iter().map(|files| {
+        let parsed_numbers = parse_dir_files(files).unwrap();
+        let bitmaps: Vec<_> = parsed_numbers
+            .into_iter()
+            .map(|(_, r)| r.map(RoaringBitmap::from_sorted_iter).unwrap())
+            .collect();
+        (files, bitmaps)
+    }).collect::<Vec<_>>();
 
-    let mut group = c.benchmark_group("Multi Xor");
-
-    group.bench_function("Naive Lazy Ref", |b| {
-        b.iter(|| {
-            black_box(roaring::bitmap::naive_multi_xor_ref(&bitmaps));
+    for (filename, bitmaps) in datasets {
+        let mut group = c.benchmark_group(format!("{}/Multi Xor", filename));
+        group.bench_function("Naive Lazy Cow", |b| {
+            b.iter(|| {
+                black_box(roaring::bitmap::naive_multi_xor_cow(&bitmaps));
+            });
         });
-    });
 
-    group.bench_function("Naive Lazy Owned", |b| {
-        b.iter_batched(
-            || bitmaps.clone(),
-            |bitmaps: Vec<RoaringBitmap>| {
-                black_box(roaring::bitmap::naive_multi_xor_owned(bitmaps));
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.bench_function("Multi Xor Ref", |b| {
-        b.iter(|| {
-            black_box(bitmaps.as_slice().bitxor());
+        group.bench_function("Naive Lazy Ref Cow BTreeMap", |b| {
+            b.iter(|| {
+                black_box(roaring::bitmap::naive_multi_xor_cow_btreemap(&bitmaps));
+            });
         });
-    });
 
-    group.bench_function("Multi Xor Owned", |b| {
-        b.iter_batched(
-            || bitmaps.clone(),
-            |bitmaps: Vec<RoaringBitmap>| {
-                black_box(bitmaps.bitxor());
-            },
-            BatchSize::SmallInput,
-        );
-    });
+        group.bench_function("Naive Lazy Ref Cow HashMap", |b| {
+            b.iter(|| {
+                black_box(roaring::bitmap::naive_multi_xor_cow_hashmap(&bitmaps));
+            });
+        });
+
+        group.bench_function("Naive Lazy Ref", |b| {
+            b.iter(|| {
+                black_box(roaring::bitmap::naive_multi_xor_ref(&bitmaps));
+            });
+        });
+
+        group.bench_function("Naive Lazy Ref BTreeMap", |b| {
+            b.iter(|| {
+                black_box(roaring::bitmap::naive_multi_xor_ref_btreemap(&bitmaps));
+            });
+        });
+
+
+        group.bench_function("Naive Lazy Ref HashMap", |b| {
+            b.iter(|| {
+                black_box(roaring::bitmap::naive_multi_xor_ref_hashmap(&bitmaps));
+            });
+        });
+
+        group.bench_function("Naive Lazy Owned", |b| {
+            b.iter_batched(
+                || bitmaps.clone(),
+                |bitmaps: Vec<RoaringBitmap>| {
+                    black_box(roaring::bitmap::naive_multi_xor_owned(bitmaps));
+                },
+                BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_function("Multi Xor Ref", |b| {
+            b.iter(|| {
+                black_box(bitmaps.as_slice().bitxor());
+            });
+        });
+
+        group.bench_function("Multi Xor Owned", |b| {
+            b.iter_batched(
+                || bitmaps.clone(),
+                |bitmaps: Vec<RoaringBitmap>| {
+                    black_box(bitmaps.bitxor());
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
 }
 
 fn multi_sub(c: &mut Criterion) {
@@ -661,4 +742,10 @@ criterion_group!(
     multi_bitxor,
     multi_sub,
 );
-criterion_main!(ops);
+
+criterion_group!(
+    multi_or,
+    multi_bitor,
+    multi_bitxor
+);
+criterion_main!(multi_or);
