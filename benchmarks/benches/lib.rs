@@ -2,14 +2,71 @@ mod datasets_paths;
 mod prefetched_datasets_paths;
 
 use itertools::Itertools;
-// use std::cmp::Reverse;
+use std::fs::DirEntry;
 use std::num::ParseIntError;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Bencher, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use lazy_static::lazy_static;
 use prefetched_datasets_paths::*;
 use roaring::RoaringBitmap;
+
+type DirectoryName = &'static str;
+
+lazy_static! {
+    static ref SORTED_DATASETS: Vec<(DirectoryName, Vec<(DirEntry, Vec<u32>)>)> =
+        [CENSUS1881_SRT, CENSUS_INCOME_SRT, WEATHER_SEPT_85_SRT, WIKILEAKS_NOQUOTES_SRT]
+            .iter()
+            .map(|&dir| (dir, parse_dir_files2(dir)))
+            .collect();
+    static ref UNSORTED_DATASETS: Vec<(DirectoryName, Vec<(DirEntry, Vec<u32>)>)> =
+        [CENSUS1881, CENSUS_INCOME, WEATHER_SEPT_85, WIKILEAKS_NOQUOTES]
+            .iter()
+            .map(|&dir| (dir, parse_dir_files2(dir)))
+            .collect();
+    static ref DATASETS: Vec<(DirectoryName, Vec<RoaringBitmap>)> = SORTED_DATASETS
+        .iter()
+        .map(|(dir, files)| {
+            let bitmaps = files
+                .iter()
+                .map(|(_, parsed_numbers)| {
+                    RoaringBitmap::from_sorted_iter(parsed_numbers.iter().cloned())
+                        .expect(&format!("failed to parse roaring from {}", dir))
+                })
+                .collect();
+
+            (dir.strip_suffix("_srt").unwrap(), bitmaps)
+        })
+        .collect();
+}
+
+fn extract_integers(content: &str) -> Result<Vec<u32>, ParseIntError> {
+    content.split(',').map(|s| s.trim().parse()).collect()
+}
+
+// Parse every file into a vector of integer.
+fn parse_dir_files(files: &Path) -> io::Result<Vec<(PathBuf, Result<Vec<u32>, ParseIntError>)>> {
+    fs::read_dir(files)?
+        .map(|r| r.and_then(|e| fs::read_to_string(e.path()).map(|r| (e.path(), r))))
+        .map(|r| r.map(|(p, c)| (p, extract_integers(&c))))
+        .collect()
+}
+
+fn parse_dir_files2(files: &str) -> Vec<(DirEntry, Vec<u32>)> {
+    let path_str = format!("datasets/{}", files);
+    let path = Path::new(path_str.as_str());
+    fs::read_dir(path)
+        .expect(&format!("failed to read dir: {:?}", files))
+        .map(|r| {
+            let file = r.expect("an error ocurred while reading files");
+            let str = fs::read_to_string(file.path()).expect(&format!("failed to read {:?}", file));
+            let parsed_numbers =
+                extract_integers(&str).expect(&format!("failed to parse int from {:?}", str));
+            (file, parsed_numbers)
+        })
+        .collect()
+}
 
 // fn create(c: &mut Criterion) {
 //     c.bench_function("create", |b| {
@@ -80,186 +137,174 @@ use roaring::RoaringBitmap;
 //     });
 // }
 
-// fn len(c: &mut Criterion) {
-//     const data_dirs: &[&str] =
-//         &[CENSUS1881_SRT, CENSUS_INCOME_SRT, WEATHER_SEPT_85_SRT, WIKILEAKS_NOQUOTES_SRT];
-//
-//     let datasets = data_dirs
-//         .iter()
-//         .map(|files| {
-//             let parsed_numbers = parse_dir_files(files).unwrap();
-//             let bitmaps: Vec<_> = parsed_numbers
-//                 .into_iter()
-//                 .map(|(_, r)| r.map(RoaringBitmap::from_sorted_iter).unwrap().unwrap())
-//                 .collect();
-//             (files, bitmaps)
-//         })
-//         .collect::<Vec<_>>();
-//
-//     for (filename, bitmaps) in datasets {
-//         c.bench_function(&format!("{}/len", filename), |b| {
-//             b.iter(|| {
-//                 for a in bitmaps.iter() {
-//                     a.len();
-//                 }
-//             });
-//         });
-//     }
-// }
+fn binary_op(
+    c: &mut Criterion,
+    op_name: &str,
+    op_owned: fn(RoaringBitmap, RoaringBitmap) -> RoaringBitmap,
+    op_ref: fn(RoaringBitmap, &RoaringBitmap) -> RoaringBitmap,
+    op_assign_owned: fn(RoaringBitmap, RoaringBitmap),
+    op_assign_ref: fn(RoaringBitmap, &RoaringBitmap),
+) {
+    let mut group = c.benchmark_group(op_name);
+
+    for (filename, bitmaps) in DATASETS.iter() {
+        group.bench_function(BenchmarkId::new(format!("{}_owned", op_name), filename), |b| {
+            b.iter_batched(
+                || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+                |bitmaps| {
+                    for (a, b) in bitmaps {
+                        black_box(op_owned(a, b));
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+
+    for (filename, bitmaps) in DATASETS.iter() {
+        group.bench_function(BenchmarkId::new(format!("{}_ref", op_name), filename), |b| {
+            b.iter_batched(
+                || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+                |bitmaps| {
+                    for (a, b) in bitmaps {
+                        black_box(op_ref(a, &b));
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+
+    for (filename, bitmaps) in DATASETS.iter() {
+        group.bench_function(
+            BenchmarkId::new(format!("{}_assign_owned", op_name), filename),
+            |b| {
+                b.iter_batched(
+                    || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+                    |bitmaps| {
+                        for (a, b) in bitmaps {
+                            op_assign_owned(a, b)
+                        }
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+    }
+
+    for (filename, bitmaps) in DATASETS.iter() {
+        group.bench_function(BenchmarkId::new(format!("{}_assign_ref", op_name), filename), |b| {
+            b.iter_batched(
+                || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+                |bitmaps| {
+                    for (a, b) in bitmaps {
+                        op_assign_ref(a, &b)
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+
+    group.finish();
+}
+
+// Creation
+
+fn creation(c: &mut Criterion) {
+    let mut group = c.benchmark_group("creation");
+
+    for (filename, parsed_numbers) in SORTED_DATASETS.iter() {
+        group.bench_function(BenchmarkId::new("from_sorted_iter", filename), |b| {
+            b.iter_with_large_drop(|| {
+                for (_, numbers) in parsed_numbers {
+                    black_box(RoaringBitmap::from_sorted_iter(numbers.iter().copied()));
+                }
+            })
+        });
+    }
+
+    for (filename, parsed_numbers) in UNSORTED_DATASETS.iter() {
+        group.bench_function(BenchmarkId::new("from_unsorted_iter", filename), |b| {
+            b.iter_with_large_drop(|| {
+                for (_, numbers) in parsed_numbers {
+                    black_box(numbers.iter().copied().collect::<RoaringBitmap>());
+                }
+            })
+        });
+    }
+
+    group.finish();
+}
+
+// Cardinality
+
+fn cardinality(c: &mut Criterion) {
+    let mut group = c.benchmark_group("cardinality");
+
+    for (filename, bitmaps) in DATASETS.iter() {
+        group.bench_function(BenchmarkId::new("len", filename), |b| {
+            b.iter(|| {
+                for a in bitmaps.iter() {
+                    a.len();
+                }
+            });
+        });
+    }
+
+    group.finish();
+}
+
+// Ops
 
 fn and(c: &mut Criterion) {
-    const data_dirs: &[&str] =
-        &[CENSUS1881_SRT, CENSUS_INCOME_SRT, WEATHER_SEPT_85_SRT, WIKILEAKS_NOQUOTES_SRT];
-
-    let datasets = data_dirs
-        .iter()
-        .map(|files| {
-            let parsed_numbers = parse_dir_files(files).unwrap();
-            let bitmaps: Vec<_> = parsed_numbers
-                .into_iter()
-                .map(|(_, r)| r.map(RoaringBitmap::from_sorted_iter).unwrap().unwrap())
-                .collect();
-            (files, bitmaps)
-        })
-        .collect::<Vec<_>>();
-
-    for (filename, bitmaps) in datasets {
-        c.bench_function(&format!("{}/and", filename), |b| {
-            b.iter(|| {
-                for (a, b) in bitmaps.iter().tuple_windows::<(_, _)>() {
-                    black_box(a & b);
-                }
-            });
-        });
-    }
+    binary_op(c, "and", |a, b| a & b, |a, b| a & b, |mut a, b| a &= b, |mut a, b| a &= b)
 }
-
-// fn intersect_with(c: &mut Criterion) {
-//     c.bench_function("intersect_with", |b| {
-//         let mut bitmap1: RoaringBitmap = (1..100).collect();
-//         let bitmap2: RoaringBitmap = (100..200).collect();
-//
-//         b.iter(|| {
-//             bitmap1 &= black_box(&bitmap2);
-//         });
-//     });
-// }
 
 fn or(c: &mut Criterion) {
-    const data_dirs: &[&str] =
-        &[CENSUS1881_SRT, CENSUS_INCOME_SRT, WEATHER_SEPT_85_SRT, WIKILEAKS_NOQUOTES_SRT];
-
-    let datasets = data_dirs
-        .iter()
-        .map(|files| {
-            let parsed_numbers = parse_dir_files(files).unwrap();
-            let bitmaps: Vec<_> = parsed_numbers
-                .into_iter()
-                .map(|(_, r)| r.map(RoaringBitmap::from_sorted_iter).unwrap().unwrap())
-                .collect();
-            (files, bitmaps)
-        })
-        .collect::<Vec<_>>();
-
-    for (filename, bitmaps) in datasets {
-        c.bench_function(&format!("{}/or", filename), |b| {
-            b.iter(|| {
-                for (a, b) in bitmaps.iter().tuple_windows::<(_, _)>() {
-                    black_box(a | b);
-                }
-            });
-        });
-    }
+    binary_op(c, "or", |a, b| a | b, |a, b| a | b, |mut a, b| a |= b, |mut a, b| a |= b)
 }
-
-// fn union_with(c: &mut Criterion) {
-//     const data_dirs: &[&str] =
-//         &[CENSUS1881_SRT, CENSUS_INCOME_SRT, WEATHER_SEPT_85_SRT, WIKILEAKS_NOQUOTES_SRT];
-//
-//     let datasets = data_dirs
-//         .iter()
-//         .map(|files| {
-//             let parsed_numbers = parse_dir_files(files).unwrap();
-//             let bitmaps: Vec<_> = parsed_numbers
-//                 .into_iter()
-//                 .map(|(_, r)| r.map(RoaringBitmap::from_sorted_iter).unwrap().unwrap())
-//                 .collect();
-//             (files, bitmaps)
-//         })
-//         .collect::<Vec<_>>();
-//
-//     for (filename, bitmaps) in datasets {
-//         c.bench_function("union_with", |b| {
-//             for (a, b) in bitmaps.iter().tuple_windows::<(_, _)>() {
-//                 black_box(a | b);
-//             }
-//         });
-//     }
-// }
 
 fn xor(c: &mut Criterion) {
-    const data_dirs: &[&str] =
-        &[CENSUS1881_SRT, CENSUS_INCOME_SRT, WEATHER_SEPT_85_SRT, WIKILEAKS_NOQUOTES_SRT];
-
-    let datasets = data_dirs
-        .iter()
-        .map(|files| {
-            let parsed_numbers = parse_dir_files(files).unwrap();
-            let bitmaps: Vec<_> = parsed_numbers
-                .into_iter()
-                .map(|(_, r)| r.map(RoaringBitmap::from_sorted_iter).unwrap().unwrap())
-                .collect();
-            (files, bitmaps)
-        })
-        .collect::<Vec<_>>();
-
-    for (filename, bitmaps) in datasets {
-        c.bench_function(&format!("{}/is_subset", filename), |b| {
-            b.iter(|| {
-                for (a, b) in bitmaps.iter().tuple_windows::<(_, _)>() {
-                    (a ^ b);
-                }
-            });
-        });
-    }
+    binary_op(c, "xor", |a, b| a ^ b, |a, b| a ^ b, |mut a, b| a ^= b, |mut a, b| a ^= b)
 }
 
-// fn symmetric_deference_with(c: &mut Criterion) {
-//     c.bench_function("symmetric_deference_with", |b| {
-//         let mut bitmap1: RoaringBitmap = (1..100).collect();
-//         let bitmap2: RoaringBitmap = (100..200).collect();
-//
-//         b.iter(|| {
-//             bitmap1 ^= black_box(&bitmap2);
-//         });
-//     });
-// }
+fn sub(c: &mut Criterion) {
+    binary_op(c, "sub", |a, b| a - b, |a, b| a - b, |mut a, b| a -= b, |mut a, b| a -= b)
+}
 
-fn is_subset(c: &mut Criterion) {
-    const data_dirs: &[&str] =
-        &[CENSUS1881_SRT, CENSUS_INCOME_SRT, WEATHER_SEPT_85_SRT, WIKILEAKS_NOQUOTES_SRT];
+// cmp
 
-    let datasets = data_dirs
-        .iter()
-        .map(|files| {
-            let parsed_numbers = parse_dir_files(files).unwrap();
-            let bitmaps: Vec<_> = parsed_numbers
-                .into_iter()
-                .map(|(_, r)| r.map(RoaringBitmap::from_sorted_iter).unwrap().unwrap())
-                .collect();
-            (files, bitmaps)
-        })
-        .collect::<Vec<_>>();
+fn comparison(c: &mut Criterion) {
+    let mut group = c.benchmark_group("comparison");
 
-    for (filename, bitmaps) in datasets {
-        c.bench_function(&format!("{}/is_subset", filename), |b| {
-            b.iter(|| {
-                for (a, b) in bitmaps.iter().tuple_windows::<(_, _)>() {
-                    black_box(a.is_subset(b));
-                }
-            });
+    for (filename, bitmaps) in DATASETS.iter() {
+        group.bench_function(BenchmarkId::new("is_disjoint", filename), |b| {
+            b.iter_batched(
+                || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+                |bitmaps| {
+                    for (a, b) in bitmaps {
+                        a.is_disjoint(&b);
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_function(BenchmarkId::new("is_subset", filename), |b| {
+            b.iter_batched(
+                || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+                |bitmaps| {
+                    for (a, b) in bitmaps {
+                        a.is_subset(&b);
+                    }
+                },
+                BatchSize::SmallInput,
+            );
         });
     }
+
+    group.finish();
 }
 
 // fn remove(c: &mut Criterion) {
@@ -318,65 +363,80 @@ fn is_subset(c: &mut Criterion) {
 //     }
 // }
 
-fn iter(c: &mut Criterion) {
-    const data_dirs: &[&str] =
-        &[CENSUS1881_SRT, CENSUS_INCOME_SRT, WEATHER_SEPT_85_SRT, WIKILEAKS_NOQUOTES_SRT];
+// Iter
 
-    let datasets = data_dirs
-        .iter()
-        .map(|files| {
-            let parsed_numbers = parse_dir_files(files).unwrap();
-            let bitmaps: Vec<_> = parsed_numbers
-                .into_iter()
-                .map(|(_, r)| r.map(RoaringBitmap::from_sorted_iter).unwrap().unwrap())
-                .collect();
-            (files, bitmaps)
-        })
-        .collect::<Vec<_>>();
-
-    for (filename, bitmaps) in datasets {
-        c.bench_function(&format!("{}/iter", filename), |b| {
-            b.iter(|| {
-                for bitmap in &bitmaps {
-                    for value in bitmap.iter() {
-                        black_box(value);
+fn iteration(c: &mut Criterion) {
+    let mut group = c.benchmark_group("iteration");
+    for (filename, bitmaps) in DATASETS.iter() {
+        group.bench_function(BenchmarkId::new("iter", filename), |b| {
+            b.iter_batched(
+                || bitmaps.clone(),
+                |bitmaps| {
+                    for bitmap in bitmaps {
+                        for value in bitmap.iter() {
+                            black_box(value);
+                        }
                     }
-                }
-            });
+                },
+                BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_function(BenchmarkId::new("into_iter", filename), |b| {
+            b.iter_batched(
+                || bitmaps.clone(),
+                |bitmaps| {
+                    for bitmap in bitmaps {
+                        for value in bitmap.into_iter() {
+                            black_box(value);
+                        }
+                    }
+                },
+                BatchSize::SmallInput,
+            );
         });
     }
+    group.finish();
 }
 
-fn serialize(c: &mut Criterion) {
-    const data_dirs: &[&str] =
-        &[CENSUS1881_SRT, CENSUS_INCOME_SRT, WEATHER_SEPT_85_SRT, WIKILEAKS_NOQUOTES_SRT];
+// Serde
 
-    let datasets = data_dirs
-        .iter()
-        .map(|files| {
-            let parsed_numbers = parse_dir_files(files).unwrap();
-            let bitmaps: Vec<_> = parsed_numbers
-                .into_iter()
-                .map(|(_, r)| r.map(RoaringBitmap::from_sorted_iter).unwrap().unwrap())
-                .collect();
-            (files, bitmaps)
-        })
-        .collect::<Vec<_>>();
-
-    for (filename, bitmaps) in datasets {
-        c.bench_function(&format!("{}/serialize", filename), |b| {
+fn serde(c: &mut Criterion) {
+    let mut group = c.benchmark_group("serde");
+    for (filename, bitmaps) in DATASETS.iter() {
+        group.bench_function(BenchmarkId::new("serialize", filename), |b| {
             let capacity = bitmaps.iter().map(|b| b.serialized_size()).max().unwrap();
             let mut buffer = Vec::with_capacity(capacity);
             b.iter(|| {
-                black_box(&buffer);
-                for bitmap in &bitmaps {
+                buffer.clear();
+                for bitmap in bitmaps {
                     bitmap.serialize_into(&mut buffer).unwrap();
                 }
-                buffer.clear();
-                black_box(&buffer);
             });
         });
+
+        group.bench_function(BenchmarkId::new("deserialize", filename), |b| {
+            b.iter_batched(
+                || {
+                    bitmaps
+                        .iter()
+                        .map(|b| {
+                            let mut buffer = Vec::with_capacity(b.serialized_size());
+                            b.serialize_into(&mut buffer).unwrap();
+                            buffer
+                        })
+                        .collect::<Vec<Vec<u8>>>()
+                },
+                |serialied_bitmaps| {
+                    for bytes in serialied_bitmaps {
+                        black_box(RoaringBitmap::deserialize_from(bytes.as_slice()).unwrap());
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
     }
+    group.finish();
 }
 
 // fn serialized_size(c: &mut Criterion) {
@@ -406,61 +466,8 @@ fn serialize(c: &mut Criterion) {
 //     }
 // }
 
-fn extract_integers<A: AsRef<str>>(content: A) -> Result<Vec<u32>, ParseIntError> {
-    content.as_ref().split(',').map(|s| s.trim().parse()).collect()
-}
-
-// Parse every file into a vector of integer.
-fn parse_dir_files<A: AsRef<Path>>(
-    files: A,
-) -> io::Result<Vec<(PathBuf, Result<Vec<u32>, ParseIntError>)>> {
-    fs::read_dir(files)?
-        .map(|r| r.and_then(|e| fs::read_to_string(e.path()).map(|r| (e.path(), r))))
-        .map(|r| r.map(|(p, c)| (p, extract_integers(c))))
-        .collect()
-}
-
-fn from_sorted_iter(c: &mut Criterion) {
-    const data_dirs: &[&str] =
-        &[CENSUS1881_SRT, CENSUS_INCOME_SRT, WEATHER_SEPT_85_SRT, WIKILEAKS_NOQUOTES_SRT];
-
-    let datasets = data_dirs
-        .iter()
-        .map(|files| {
-            let parsed_numbers = parse_dir_files(files).unwrap();
-            (files, parsed_numbers)
-        })
-        .collect::<Vec<_>>();
-
-    for (filename, parsed_numbers) in datasets {
-        c.bench_function(&format!("{}/from_sorted_iter", filename), |b| {
-            b.iter(|| {
-                for (_, numbers) in &parsed_numbers {
-                    let numbers = numbers.as_ref().unwrap();
-                    black_box(RoaringBitmap::from_sorted_iter(numbers.iter().copied()));
-                }
-            })
-        });
-    }
-}
-
 fn successive_and(c: &mut Criterion) {
-    const data_dirs: &[&str] =
-        &[CENSUS1881_SRT, CENSUS_INCOME_SRT, WEATHER_SEPT_85_SRT, WIKILEAKS_NOQUOTES_SRT];
-
-    let datasets = data_dirs
-        .iter()
-        .map(|files| {
-            let parsed_numbers = parse_dir_files(files).unwrap();
-            let bitmaps: Vec<_> = parsed_numbers
-                .into_iter()
-                .map(|(_, r)| r.map(RoaringBitmap::from_sorted_iter).unwrap().unwrap())
-                .collect();
-            (files, bitmaps)
-        })
-        .collect::<Vec<_>>();
-
-    for (filename, bitmaps) in datasets {
+    for (filename, bitmaps) in DATASETS.iter() {
         let mut group = c.benchmark_group("Successive And");
 
         group.bench_function(&format!("{}/Successive And Assign Ref", filename), |b| {
@@ -505,27 +512,12 @@ fn successive_and(c: &mut Criterion) {
 }
 
 fn successive_or(c: &mut Criterion) {
-    const data_dirs: &[&str] =
-        &[CENSUS1881_SRT, CENSUS_INCOME_SRT, WEATHER_SEPT_85_SRT, WIKILEAKS_NOQUOTES_SRT];
-
-    let datasets = data_dirs
-        .iter()
-        .map(|files| {
-            let parsed_numbers = parse_dir_files(files).unwrap();
-            let bitmaps: Vec<_> = parsed_numbers
-                .into_iter()
-                .map(|(_, r)| r.map(RoaringBitmap::from_sorted_iter).unwrap().unwrap())
-                .collect();
-            (files, bitmaps)
-        })
-        .collect::<Vec<_>>();
-
-    for (filename, bitmaps) in datasets {
+    for (filename, bitmaps) in DATASETS.iter() {
         let mut group = c.benchmark_group("Successive Or");
         group.bench_function(&format!("{}/Successive Or Assign Ref", filename), |b| {
             b.iter(|| {
                 let mut output = RoaringBitmap::new();
-                for bitmap in &bitmaps {
+                for bitmap in bitmaps {
                     output |= bitmap;
                 }
             });
@@ -547,7 +539,7 @@ fn successive_or(c: &mut Criterion) {
         group.bench_function(&format!("{}/Successive Or Ref Ref", filename), |b| {
             b.iter(|| {
                 let mut output = RoaringBitmap::new();
-                for bitmap in &bitmaps {
+                for bitmap in bitmaps {
                     output = (&output) | bitmap;
                 }
             });
@@ -562,22 +554,23 @@ criterion_group!(
     // create,
     // insert,
     // contains,
-    // len,
+    creation,
+    cardinality,
     and,
-    // intersect_with,
     or,
-    // union_with,
     xor,
-    // symmetric_deference_with,
-    is_subset,
+    sub,
+    comparison,
     // remove,
     // remove_range_bitmap,
     // insert_range_bitmap,
-    iter,
-    serialize,
+    iteration,
+    serde,
     // serialized_size,
-    from_sorted_iter,
-    successive_and,
-    successive_or,
+    // successive_and,
+    // successive_or,
 );
+
+criterion_group!(ops, and, or, xor, sub);
+
 criterion_main!(benches);
