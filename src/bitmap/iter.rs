@@ -200,7 +200,7 @@ impl RoaringBitmap {
             }
         };
 
-        self.push_unchecked(prev);
+        self.insert(prev);
         let mut count = 1;
 
         // It is now guaranteed that so long as the values are iterator are monotonically
@@ -210,7 +210,7 @@ impl RoaringBitmap {
             if value <= prev {
                 return Err(NonSortedIntegers { valid_until: count });
             } else {
-                self.push_unchecked(value);
+                self.insert(value);
                 prev = value;
                 count += 1;
             }
