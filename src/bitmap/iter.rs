@@ -3,7 +3,6 @@ use std::iter::{self, FromIterator};
 use std::{slice, vec};
 
 use super::container::Container;
-use crate::bitmap::util::split;
 use crate::{NonSortedIntegers, RoaringBitmap};
 
 /// An iterator for `RoaringBitmap`.
@@ -201,7 +200,7 @@ impl RoaringBitmap {
             }
         };
 
-        self.insert(prev);
+        self.push_unchecked(prev);
         let mut count = 1;
 
         // It is now guaranteed that so long as the values are iterator are monotonically
@@ -211,21 +210,7 @@ impl RoaringBitmap {
             if value <= prev {
                 return Err(NonSortedIntegers { valid_until: count });
             } else {
-                let (key, index) = split(value);
-                let (prev_key, _) = split(prev);
-
-                if key > prev_key {
-                    self.containers.push(Container::new(key));
-                }
-
-                // It is guaranteed there is at minimum one container as there was one insert
-                // above the loop, and len - 1 is always in bounds.
-                let container = unsafe {
-                    let i = self.containers.len() - 1;
-                    self.containers.get_unchecked_mut(i)
-                };
-
-                container.insert(index);
+                self.push_unchecked(value);
                 prev = value;
                 count += 1;
             }
