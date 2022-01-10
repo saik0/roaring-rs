@@ -7,7 +7,9 @@ use std::num::ParseIntError;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use criterion::{
+    black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
+};
 use lazy_static::lazy_static;
 use prefetched_datasets_paths::*;
 use roaring::RoaringBitmap;
@@ -65,6 +67,7 @@ fn parse_dir_files2(files: &str) -> Vec<(DirEntry, Vec<u32>)> {
                 extract_integers(&str).expect(&format!("failed to parse int from {:?}", str));
             (file, parsed_numbers)
         })
+        .sorted_unstable_by_key(|(file, _)| file.file_name())
         .collect()
 }
 
@@ -214,25 +217,69 @@ fn binary_op(
 fn creation(c: &mut Criterion) {
     let mut group = c.benchmark_group("creation");
 
+    // assert_eq!(SORTED_DATASETS.len(), UNSORTED_DATASETS.len());
+    // SORTED_DATASETS.iter().zip(UNSORTED_DATASETS.iter()).for_each(|((dl, l), (dr, r))| {
+    //     assert_eq!(l.len(), r.len());
+    //
+    //     println!("{:?} | {:?}", dl, dr);
+    //     // l.iter().zip(r.iter()).for_each(|((fx, x), (fy, y))| {
+    //     //     println!("    {:?} | {:?}", fx, fy);
+    //     //     assert_eq!(x.len(), y.len(), "{:?} | {:?}", fx, fy);
+    //     // });
+    //
+    //     let l_count: u64 = l.iter().map(|(_, n)| n.len() as u64).sum();
+    //     let r_count: u64 = r.iter().map(|(_, n)| n.len() as u64).sum();
+    //
+    //     assert_eq!(l_count, r_count, "{:?} | {:?}", l_count, r_count);
+    // });
+
     for (filename, parsed_numbers) in SORTED_DATASETS.iter() {
+        let count = parsed_numbers.iter().map(|(_, n)| n.len() as u64).sum();
+        group.throughput(Throughput::Elements(count));
         group.bench_function(BenchmarkId::new("from_sorted_iter", filename), |b| {
-            b.iter_with_large_drop(|| {
-                for (_, numbers) in parsed_numbers {
-                    black_box(RoaringBitmap::from_sorted_iter(numbers.iter().copied()));
-                }
-            })
+            b.iter_batched(
+                || parsed_numbers.iter().map(|(_, n)| n.clone()).collect::<Vec<Vec<u32>>>(),
+                |parsed_numbers| {
+                    for numbers in parsed_numbers {
+                        black_box(RoaringBitmap::from_sorted_iter(numbers.into_iter()));
+                    }
+                },
+                BatchSize::SmallInput,
+            );
         });
     }
 
-    for (filename, parsed_numbers) in UNSORTED_DATASETS.iter() {
-        group.bench_function(BenchmarkId::new("from_unsorted_iter", filename), |b| {
-            b.iter_with_large_drop(|| {
-                for (_, numbers) in parsed_numbers {
-                    black_box(numbers.iter().copied().collect::<RoaringBitmap>());
-                }
-            })
+    for (filename, parsed_numbers) in SORTED_DATASETS.iter() {
+        let count = parsed_numbers.iter().map(|(_, n)| n.len() as u64).sum();
+        group.throughput(Throughput::Elements(count));
+        group.bench_function(BenchmarkId::new("collect", filename), |b| {
+            b.iter_batched(
+                || parsed_numbers.iter().map(|(_, n)| n.clone()).collect::<Vec<Vec<u32>>>(),
+                |parsed_numbers| {
+                    for numbers in parsed_numbers {
+                        black_box(numbers.iter().copied().collect::<RoaringBitmap>());
+                    }
+                },
+                BatchSize::SmallInput,
+            );
         });
     }
+
+    // for (filename, parsed_numbers) in UNSORTED_DATASETS.iter() {
+    //     let count = parsed_numbers.iter().map(|(_, n)| n.len() as u64).sum();
+    //     group.throughput(Throughput::Elements(count));
+    //     group.bench_function(BenchmarkId::new("from_unsorted_iter", filename), |b| {
+    //         b.iter_batched(
+    //             || parsed_numbers.iter().map(|(_, n)| n.clone()).collect::<Vec<Vec<u32>>>(),
+    //             |parsed_numbers| {
+    //                 for numbers in parsed_numbers {
+    //                     black_box(numbers.iter().copied().collect::<RoaringBitmap>());
+    //                 }
+    //             },
+    //             BatchSize::SmallInput,
+    //         );
+    //     });
+    // }
 
     group.finish();
 }
@@ -573,4 +620,6 @@ criterion_group!(
 
 criterion_group!(ops, and, or, xor, sub);
 
-criterion_main!(benches);
+criterion_group!(create, creation);
+
+criterion_main!(create);
