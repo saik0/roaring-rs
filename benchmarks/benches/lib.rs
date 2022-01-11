@@ -7,25 +7,45 @@ use std::num::ParseIntError;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use criterion::{
+    black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
+};
 use lazy_static::lazy_static;
 use prefetched_datasets_paths::*;
 use roaring::RoaringBitmap;
 
 type DirectoryName = &'static str;
 
+const DATASETS: &[&str] = &[
+    CENSUS1881,
+    WIKILEAKS_NOQUOTES
+];
+
+// const DATASETS: &[&str] = &[
+//     CENSUS1881,
+//     CENSUS_INCOME,
+//     WEATHER_SEPT_85,
+//     WIKILEAKS_NOQUOTES
+// ];
+
+// const DATASETS: &[&str] = &[
+//     CENSUS1881,
+//     CENSUS1881_SRT,
+//     CENSUS_INCOME,
+//     CENSUS_INCOME_SRT,
+//     WEATHER_SEPT_85,
+//     WEATHER_SEPT_85_SRT,
+//     WIKILEAKS_NOQUOTES,
+//     WIKILEAKS_NOQUOTES_SRT,
+// ];
+
 lazy_static! {
-    static ref SORTED_DATASETS: Vec<(DirectoryName, Vec<(DirEntry, Vec<u32>)>)> =
-        [CENSUS1881_SRT, CENSUS_INCOME_SRT, WEATHER_SEPT_85_SRT, WIKILEAKS_NOQUOTES_SRT]
+    static ref PARSED_DATASET_NUMBERS: Vec<(DirectoryName, Vec<(DirEntry, Vec<u32>)>)> =
+        DATASETS
             .iter()
             .map(|&dir| (dir, parse_dir_files2(dir)))
             .collect();
-    static ref UNSORTED_DATASETS: Vec<(DirectoryName, Vec<(DirEntry, Vec<u32>)>)> =
-        [CENSUS1881, CENSUS_INCOME, WEATHER_SEPT_85, WIKILEAKS_NOQUOTES]
-            .iter()
-            .map(|&dir| (dir, parse_dir_files2(dir)))
-            .collect();
-    static ref DATASETS: Vec<(DirectoryName, Vec<RoaringBitmap>)> = SORTED_DATASETS
+    static ref PARSED_DATASET_BITMAPS: Vec<(DirectoryName, Vec<RoaringBitmap>)> = PARSED_DATASET_NUMBERS
         .iter()
         .map(|(dir, files)| {
             let bitmaps = files
@@ -36,7 +56,7 @@ lazy_static! {
                 })
                 .collect();
 
-            (dir.strip_suffix("_srt").unwrap(), bitmaps)
+            (*dir, bitmaps)
         })
         .collect();
 }
@@ -65,6 +85,7 @@ fn parse_dir_files2(files: &str) -> Vec<(DirEntry, Vec<u32>)> {
                 extract_integers(&str).expect(&format!("failed to parse int from {:?}", str));
             (file, parsed_numbers)
         })
+        .sorted_unstable_by_key(|(file, _)| file.file_name())
         .collect()
 }
 
@@ -145,10 +166,14 @@ fn binary_op(
     op_assign_owned: fn(RoaringBitmap, RoaringBitmap),
     op_assign_ref: fn(RoaringBitmap, &RoaringBitmap),
 ) {
-    let mut group = c.benchmark_group(op_name);
+    let mut group = c.benchmark_group(format!("pairwise_{}", op_name));
 
-    for (filename, bitmaps) in DATASETS.iter() {
-        group.bench_function(BenchmarkId::new(format!("{}_owned", op_name), filename), |b| {
+    for (filename, bitmaps) in PARSED_DATASET_BITMAPS.iter() {
+        // Number of bits
+        let count = bitmaps.iter().map(|b| b.len()).sum();
+        group.throughput(Throughput::Elements(count));
+
+        group.bench_function(BenchmarkId::new("own", filename), |b| {
             b.iter_batched(
                 || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
                 |bitmaps| {
@@ -159,10 +184,8 @@ fn binary_op(
                 BatchSize::SmallInput,
             );
         });
-    }
 
-    for (filename, bitmaps) in DATASETS.iter() {
-        group.bench_function(BenchmarkId::new(format!("{}_ref", op_name), filename), |b| {
+        group.bench_function(BenchmarkId::new("ref", filename), |b| {
             b.iter_batched(
                 || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
                 |bitmaps| {
@@ -173,27 +196,20 @@ fn binary_op(
                 BatchSize::SmallInput,
             );
         });
-    }
 
-    for (filename, bitmaps) in DATASETS.iter() {
-        group.bench_function(
-            BenchmarkId::new(format!("{}_assign_owned", op_name), filename),
-            |b| {
-                b.iter_batched(
-                    || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
-                    |bitmaps| {
-                        for (a, b) in bitmaps {
-                            op_assign_owned(a, b)
-                        }
-                    },
-                    BatchSize::SmallInput,
-                );
-            },
-        );
-    }
+        group.bench_function(BenchmarkId::new("assign_own", filename), |b| {
+            b.iter_batched(
+                || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+                |bitmaps| {
+                    for (a, b) in bitmaps {
+                        op_assign_owned(a, b)
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
 
-    for (filename, bitmaps) in DATASETS.iter() {
-        group.bench_function(BenchmarkId::new(format!("{}_assign_ref", op_name), filename), |b| {
+        group.bench_function(BenchmarkId::new("assign_ref", filename), |b| {
             b.iter_batched(
                 || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
                 |bitmaps| {
@@ -214,23 +230,33 @@ fn binary_op(
 fn creation(c: &mut Criterion) {
     let mut group = c.benchmark_group("creation");
 
-    for (filename, parsed_numbers) in SORTED_DATASETS.iter() {
-        group.bench_function(BenchmarkId::new("from_sorted_iter", filename), |b| {
-            b.iter_with_large_drop(|| {
-                for (_, numbers) in parsed_numbers {
-                    black_box(RoaringBitmap::from_sorted_iter(numbers.iter().copied()));
-                }
-            })
-        });
-    }
+    for (filename, parsed_numbers) in PARSED_DATASET_NUMBERS.iter() {
 
-    for (filename, parsed_numbers) in UNSORTED_DATASETS.iter() {
-        group.bench_function(BenchmarkId::new("from_unsorted_iter", filename), |b| {
-            b.iter_with_large_drop(|| {
-                for (_, numbers) in parsed_numbers {
-                    black_box(numbers.iter().copied().collect::<RoaringBitmap>());
-                }
-            })
+        let count = parsed_numbers.iter().map(|(_, n)| n.len() as u64).sum();
+        group.throughput(Throughput::Elements(count));
+
+        group.bench_function(BenchmarkId::new("from_sorted_iter", filename), |b| {
+            b.iter_batched(
+                || parsed_numbers.iter().map(|(_, n)| n.clone()).collect::<Vec<Vec<u32>>>(),
+                |parsed_numbers| {
+                    for numbers in parsed_numbers {
+                        black_box(RoaringBitmap::from_sorted_iter(numbers.into_iter()));
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_function(BenchmarkId::new("collect", filename), |b| {
+            b.iter_batched(
+                || parsed_numbers.iter().map(|(_, n)| n.clone()).collect::<Vec<Vec<u32>>>(),
+                |parsed_numbers| {
+                    for numbers in parsed_numbers {
+                        black_box(numbers.iter().copied().collect::<RoaringBitmap>());
+                    }
+                },
+                BatchSize::SmallInput,
+            );
         });
     }
 
@@ -242,7 +268,7 @@ fn creation(c: &mut Criterion) {
 fn cardinality(c: &mut Criterion) {
     let mut group = c.benchmark_group("cardinality");
 
-    for (filename, bitmaps) in DATASETS.iter() {
+    for (filename, bitmaps) in PARSED_DATASET_BITMAPS.iter() {
         group.bench_function(BenchmarkId::new("len", filename), |b| {
             b.iter(|| {
                 for a in bitmaps.iter() {
@@ -278,7 +304,7 @@ fn sub(c: &mut Criterion) {
 fn comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("comparison");
 
-    for (filename, bitmaps) in DATASETS.iter() {
+    for (filename, bitmaps) in PARSED_DATASET_BITMAPS.iter() {
         group.bench_function(BenchmarkId::new("is_disjoint", filename), |b| {
             b.iter_batched(
                 || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
@@ -367,7 +393,7 @@ fn comparison(c: &mut Criterion) {
 
 fn iteration(c: &mut Criterion) {
     let mut group = c.benchmark_group("iteration");
-    for (filename, bitmaps) in DATASETS.iter() {
+    for (filename, bitmaps) in PARSED_DATASET_BITMAPS.iter() {
         group.bench_function(BenchmarkId::new("iter", filename), |b| {
             b.iter_batched(
                 || bitmaps.clone(),
@@ -403,7 +429,7 @@ fn iteration(c: &mut Criterion) {
 
 fn serde(c: &mut Criterion) {
     let mut group = c.benchmark_group("serde");
-    for (filename, bitmaps) in DATASETS.iter() {
+    for (filename, bitmaps) in PARSED_DATASET_BITMAPS.iter() {
         group.bench_function(BenchmarkId::new("serialize", filename), |b| {
             let capacity = bitmaps.iter().map(|b| b.serialized_size()).max().unwrap();
             let mut buffer = Vec::with_capacity(capacity);
@@ -467,7 +493,7 @@ fn serde(c: &mut Criterion) {
 // }
 
 fn successive_and(c: &mut Criterion) {
-    for (filename, bitmaps) in DATASETS.iter() {
+    for (filename, bitmaps) in PARSED_DATASET_BITMAPS.iter() {
         let mut group = c.benchmark_group("Successive And");
 
         group.bench_function(&format!("{}/Successive And Assign Ref", filename), |b| {
@@ -512,7 +538,7 @@ fn successive_and(c: &mut Criterion) {
 }
 
 fn successive_or(c: &mut Criterion) {
-    for (filename, bitmaps) in DATASETS.iter() {
+    for (filename, bitmaps) in PARSED_DATASET_BITMAPS.iter() {
         let mut group = c.benchmark_group("Successive Or");
         group.bench_function(&format!("{}/Successive Or Assign Ref", filename), |b| {
             b.iter(|| {
@@ -573,4 +599,6 @@ criterion_group!(
 
 criterion_group!(ops, and, or, xor, sub);
 
-criterion_main!(benches);
+criterion_group!(create, or);
+
+criterion_main!(create);
