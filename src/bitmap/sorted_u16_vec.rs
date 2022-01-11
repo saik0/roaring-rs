@@ -1,7 +1,10 @@
 use crate::bitmap::bitmap_8k::{bit, key, Bitmap8K, BITMAP_LENGTH};
 use crate::bitmap::store::Store;
 use crate::bitmap::store::Store::Bitmap;
+use std::cmp::Ordering;
 use std::cmp::Ordering::*;
+use std::convert::{TryFrom, TryInto};
+use std::fmt::{Display, Formatter};
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitXor, BitXorAssign, RangeInclusive, Sub, SubAssign};
 
 #[derive(Clone, Eq, PartialEq)]
@@ -14,8 +17,20 @@ impl SortedU16Vec {
         SortedU16Vec { vec: vec![] }
     }
 
-    pub fn from_vec(vec: Vec<u16>) -> SortedU16Vec {
-        SortedU16Vec { vec }
+    ///
+    /// Create a new SortedU16Vec from a given vec
+    /// It is up to the caller to ensure the vec is sorted and deduplicated
+    /// Favor `try_from` / `try_into` for cases in which these invariants should be checked
+    ///
+    /// # Panics
+    ///
+    /// When debug_assertions are enabled and the above invariants are not met
+    pub fn from_vec_unchecked(vec: Vec<u16>) -> SortedU16Vec {
+        if cfg!(debug_assertions) {
+            vec.try_into().unwrap()
+        } else {
+            SortedU16Vec { vec }
+        }
     }
 
     pub fn insert(&mut self, index: u16) -> bool {
@@ -123,7 +138,7 @@ impl SortedU16Vec {
         for &index in self.iter() {
             bits[key(index)] |= 1 << bit(index);
         }
-        Bitmap(Bitmap8K::new(len, bits))
+        Bitmap(Bitmap8K::from_unchecked(len, bits))
     }
 
     pub fn len(&self) -> u64 {
@@ -154,6 +169,53 @@ impl SortedU16Vec {
 impl Default for SortedU16Vec {
     fn default() -> Self {
         SortedU16Vec::new()
+    }
+}
+
+#[derive(Debug)]
+pub struct Error {
+    index: usize,
+    kind: ErrorKind,
+}
+
+#[derive(Debug)]
+pub enum ErrorKind {
+    Duplicate,
+    OutOfOrder,
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self.kind {
+            ErrorKind::Duplicate => {
+                write!(f, "Duplicate element found at index: {}", self.index)
+            }
+            ErrorKind::OutOfOrder => {
+                write!(f, "An element was out of order at index: {}", self.index)
+            }
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+impl TryFrom<Vec<u16>> for SortedU16Vec {
+    type Error = Error;
+
+    fn try_from(value: Vec<u16>) -> Result<Self, Self::Error> {
+        let mut iter = value.iter().enumerate();
+        if let Some((_, mut prev)) = iter.next() {
+            for (i, cur) in iter {
+                match cur.cmp(prev) {
+                    Ordering::Less => return Err(Error { index: i, kind: ErrorKind::OutOfOrder }),
+                    Ordering::Equal => return Err(Error { index: i, kind: ErrorKind::Duplicate }),
+                    Ordering::Greater => {}
+                }
+                prev = cur;
+            }
+        }
+
+        Ok(SortedU16Vec { vec: value })
     }
 }
 
@@ -374,7 +436,7 @@ mod tests {
     #[test]
     #[allow(clippy::reversed_empty_ranges)]
     fn test_array_insert_invalid_range() {
-        let mut store = Store::Array(SortedU16Vec::from_vec(vec![1, 2, 8, 9]));
+        let mut store = Store::Array(SortedU16Vec::from_vec_unchecked(vec![1, 2, 8, 9]));
 
         // Insert a range with start > end.
         let new = store.insert_range(6..=1);
@@ -385,7 +447,7 @@ mod tests {
 
     #[test]
     fn test_array_insert_range() {
-        let mut store = Store::Array(SortedU16Vec::from_vec(vec![1, 2, 8, 9]));
+        let mut store = Store::Array(SortedU16Vec::from_vec_unchecked(vec![1, 2, 8, 9]));
 
         let new = store.insert_range(4..=5);
         assert_eq!(new, 2);
@@ -395,7 +457,7 @@ mod tests {
 
     #[test]
     fn test_array_insert_range_left_overlap() {
-        let mut store = Store::Array(SortedU16Vec::from_vec(vec![1, 2, 8, 9]));
+        let mut store = Store::Array(SortedU16Vec::from_vec_unchecked(vec![1, 2, 8, 9]));
 
         let new = store.insert_range(2..=5);
         assert_eq!(new, 3);
@@ -405,7 +467,7 @@ mod tests {
 
     #[test]
     fn test_array_insert_range_right_overlap() {
-        let mut store = Store::Array(SortedU16Vec::from_vec(vec![1, 2, 8, 9]));
+        let mut store = Store::Array(SortedU16Vec::from_vec_unchecked(vec![1, 2, 8, 9]));
 
         let new = store.insert_range(4..=8);
         assert_eq!(new, 4);
@@ -415,7 +477,7 @@ mod tests {
 
     #[test]
     fn test_array_insert_range_full_overlap() {
-        let mut store = Store::Array(SortedU16Vec::from_vec(vec![1, 2, 8, 9]));
+        let mut store = Store::Array(SortedU16Vec::from_vec_unchecked(vec![1, 2, 8, 9]));
 
         let new = store.insert_range(1..=9);
         assert_eq!(new, 5);
@@ -426,7 +488,7 @@ mod tests {
     #[test]
     #[allow(clippy::reversed_empty_ranges)]
     fn test_bitmap_insert_invalid_range() {
-        let store = Store::Array(SortedU16Vec::from_vec(vec![1, 2, 8, 9]));
+        let store = Store::Array(SortedU16Vec::from_vec_unchecked(vec![1, 2, 8, 9]));
         let mut store = into_bitmap_store(store);
 
         // Insert a range with start > end.
@@ -438,7 +500,7 @@ mod tests {
 
     #[test]
     fn test_bitmap_insert_same_key_overlap() {
-        let store = Store::Array(SortedU16Vec::from_vec(vec![1, 2, 3, 62, 63]));
+        let store = Store::Array(SortedU16Vec::from_vec_unchecked(vec![1, 2, 3, 62, 63]));
         let mut store = into_bitmap_store(store);
 
         let new = store.insert_range(1..=62);
@@ -449,7 +511,7 @@ mod tests {
 
     #[test]
     fn test_bitmap_insert_range() {
-        let store = Store::Array(SortedU16Vec::from_vec(vec![1, 2, 130]));
+        let store = Store::Array(SortedU16Vec::from_vec_unchecked(vec![1, 2, 130]));
         let mut store = into_bitmap_store(store);
 
         let new = store.insert_range(4..=128);
@@ -464,7 +526,7 @@ mod tests {
 
     #[test]
     fn test_bitmap_insert_range_left_overlap() {
-        let store = Store::Array(SortedU16Vec::from_vec(vec![1, 2, 130]));
+        let store = Store::Array(SortedU16Vec::from_vec_unchecked(vec![1, 2, 130]));
         let mut store = into_bitmap_store(store);
 
         let new = store.insert_range(1..=128);
@@ -479,7 +541,7 @@ mod tests {
 
     #[test]
     fn test_bitmap_insert_range_right_overlap() {
-        let store = Store::Array(SortedU16Vec::from_vec(vec![1, 2, 130]));
+        let store = Store::Array(SortedU16Vec::from_vec_unchecked(vec![1, 2, 130]));
         let mut store = into_bitmap_store(store);
 
         let new = store.insert_range(4..=132);
@@ -493,7 +555,7 @@ mod tests {
 
     #[test]
     fn test_bitmap_insert_range_full_overlap() {
-        let store = Store::Array(SortedU16Vec::from_vec(vec![1, 2, 130]));
+        let store = Store::Array(SortedU16Vec::from_vec_unchecked(vec![1, 2, 130]));
         let mut store = into_bitmap_store(store);
 
         let new = store.insert_range(1..=134);
