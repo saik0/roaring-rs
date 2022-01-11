@@ -16,10 +16,10 @@ use roaring::RoaringBitmap;
 
 type DirectoryName = &'static str;
 
-const DATASETS: &[&str] = &[
-    CENSUS1881,
-    WIKILEAKS_NOQUOTES
-];
+// const DATASETS: &[&str] = &[
+//     CENSUS1881,
+//     WIKILEAKS_NOQUOTES
+// ];
 
 // const DATASETS: &[&str] = &[
 //     CENSUS1881,
@@ -28,16 +28,16 @@ const DATASETS: &[&str] = &[
 //     WIKILEAKS_NOQUOTES
 // ];
 
-// const DATASETS: &[&str] = &[
-//     CENSUS1881,
-//     CENSUS1881_SRT,
-//     CENSUS_INCOME,
-//     CENSUS_INCOME_SRT,
-//     WEATHER_SEPT_85,
-//     WEATHER_SEPT_85_SRT,
-//     WIKILEAKS_NOQUOTES,
-//     WIKILEAKS_NOQUOTES_SRT,
-// ];
+const DATASETS: &[&str] = &[
+    CENSUS1881,
+    CENSUS1881_SRT,
+    CENSUS_INCOME,
+    CENSUS_INCOME_SRT,
+    WEATHER_SEPT_85,
+    WEATHER_SEPT_85_SRT,
+    WIKILEAKS_NOQUOTES,
+    WIKILEAKS_NOQUOTES_SRT,
+];
 
 lazy_static! {
     static ref PARSED_DATASET_NUMBERS: Vec<(DirectoryName, Vec<(DirEntry, Vec<u32>)>)> =
@@ -170,7 +170,7 @@ fn binary_op(
 
     for (filename, bitmaps) in PARSED_DATASET_BITMAPS.iter() {
         // Number of bits
-        let count = bitmaps.iter().map(|b| b.len()).sum();
+        let count = bitmaps.iter().map(|b| b.container_count() as u64).sum();
         group.throughput(Throughput::Elements(count));
 
         group.bench_function(BenchmarkId::new("own", filename), |b| {
@@ -597,8 +597,9 @@ criterion_group!(
     // successive_or,
 );
 
-criterion_group!(ops, and, or, xor, sub);
+//criterion_group!(ops, and, or, xor, sub);
+criterion_group!(ops, or);
 
-criterion_group!(create, or);
+criterion_group!(create, creation);
 
-criterion_main!(create);
+criterion_main!(ops);
