@@ -1,5 +1,5 @@
 use crate::bitmap::bitmap_8k::{Bitmap8K, BitmapIter, BITMAP_LENGTH};
-use crate::bitmap::sorted_u16_vec::SortedU16Vec;
+use crate::bitmap::sorted_u16_vec::{union_gallop, SortedU16Vec};
 use std::mem;
 use std::ops::{
     BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, RangeInclusive, Sub, SubAssign,
@@ -22,6 +22,13 @@ pub enum Iter<'a> {
 }
 
 impl Store {
+    pub fn shrink_to_fit(&mut self) {
+        match self {
+            Array(vec) => vec.shrink_to_fit(),
+            Bitmap(..) => (),
+        }
+    }
+
     pub fn insert(&mut self, index: u16) -> bool {
         match *self {
             Array(ref mut vec) => vec.insert(index),
@@ -113,6 +120,28 @@ impl Store {
         match *self {
             Array(ref vec) => vec.max(),
             Bitmap(ref bits) => bits.max(),
+        }
+    }
+
+    pub fn union_gallop(&mut self, rhs: &Store) {
+        match (self, &rhs) {
+            (&mut Array(ref mut vec1), &Array(ref vec2)) => {
+                *vec1 = SortedU16Vec::from_vec_unchecked(union_gallop(
+                    vec1.as_slice(),
+                    &vec2.as_slice(),
+                ));
+            }
+            (&mut Bitmap(ref mut bits1), &Array(ref vec2)) => {
+                BitOrAssign::bitor_assign(bits1, vec2);
+            }
+            (&mut Bitmap(ref mut bits1), &Bitmap(ref bits2)) => {
+                BitOrAssign::bitor_assign(bits1, bits2);
+            }
+            (this @ &mut Array(..), &Bitmap(ref bits2)) => {
+                let mut lhs: Store = Bitmap(bits2.clone());
+                BitOrAssign::bitor_assign(&mut lhs, &*this);
+                *this = lhs;
+            }
         }
     }
 }

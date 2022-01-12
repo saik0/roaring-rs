@@ -155,6 +155,16 @@ impl RoaringBitmap {
     pub fn symmetric_difference_with(&mut self, other: &RoaringBitmap) {
         BitXorAssign::bitxor_assign(self, other)
     }
+
+    pub fn union_with_gallop(&mut self, rhs: &RoaringBitmap) {
+        for container in &rhs.containers {
+            let key = container.key;
+            match self.containers.binary_search_by_key(&key, |c| c.key) {
+                Err(loc) => self.containers.insert(loc, container.clone()),
+                Ok(loc) => self.containers[loc].union_gallop(container),
+            }
+        }
+    }
 }
 
 impl BitOr<RoaringBitmap> for RoaringBitmap {

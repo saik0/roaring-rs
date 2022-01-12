@@ -33,6 +33,10 @@ impl SortedU16Vec {
         }
     }
 
+    pub fn shrink_to_fit(&mut self) {
+        self.vec.shrink_to_fit();
+    }
+
     pub fn insert(&mut self, index: u16) -> bool {
         self.vec.binary_search(&index).map_err(|loc| self.vec.insert(loc, index)).is_err()
     }
@@ -413,6 +417,118 @@ impl BitXorAssign<&Self> for SortedU16Vec {
             self.vec.extend(iter2.cloned());
         }
     }
+}
+
+macro_rules! dev_println {
+    ($($arg:tt)*) => (if cfg!(all(debug_assertions, not(test))) { println!($($arg)*); })
+}
+
+pub fn union_gallop(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
+    let mut vec = {
+        let capacity = (lhs.len() + rhs.len()).min(4096);
+        Vec::with_capacity(capacity)
+    };
+
+    dev_println!("lhs: {:?}", lhs);
+    dev_println!("rhs: {:?}", rhs);
+
+    let mut lhs_gallop: usize = 0;
+    let mut rhs_gallop: usize = 0;
+
+    // Traverse both arrays
+    while lhs.len() > 0 && rhs.len() > 0 {
+        let a = unsafe { lhs.get_unchecked(0) };
+        let b = unsafe { rhs.get_unchecked(0) };
+
+        dev_println!("a: {}, b: {}", a, b);
+
+        match a.cmp(b) {
+            Less => {
+                dev_println!("lt");
+                if lhs_gallop >= 7 {
+                    dev_println!("gallop lhs");
+                    let (i, j) = match lhs.binary_search(b) {
+                        Ok(v) => (v + 1, 1),
+                        Err(v) => (v, 0),
+                    };
+
+                    vec.extend_from_slice(&lhs[..i]);
+                    lhs = &lhs[i..];
+                    rhs = &rhs[j..];
+
+                    if i < 7 {
+                        lhs_gallop = 0;
+                    }
+                } else {
+                    vec.push(*a);
+                    lhs = &lhs[1..];
+                    lhs_gallop += 1;
+                }
+                rhs_gallop = 0;
+            }
+            Greater => {
+                dev_println!("gt");
+                if rhs_gallop >= 7 {
+                    dev_println!("gallop rhs");
+                    let (i, j) = match rhs.binary_search(a) {
+                        Ok(v) => (v + 1, 1),
+                        Err(v) => (v, 0),
+                    };
+
+                    vec.extend_from_slice(&rhs[..i]);
+                    rhs = &rhs[i..];
+                    lhs = &lhs[j..];
+                    if i < 7 {
+                        rhs_gallop = 0;
+                    }
+                } else {
+                    vec.push(*b);
+                    rhs = &rhs[1..];
+                    rhs_gallop += 1;
+                }
+                lhs_gallop = 0;
+            }
+            Equal => {
+                dev_println!("eq");
+                vec.push(*a);
+                lhs = &lhs[1..];
+                rhs = &rhs[1..];
+                lhs_gallop = 0;
+                rhs_gallop = 0;
+            }
+        }
+        dev_println!("lhs: {:?}", lhs);
+        dev_println!("rhs: {:?}", rhs);
+        dev_println!("vec: {:?}\n\n", vec);
+    }
+
+    // dev_println!("\n\nwalk: {:?}\n\n", vec);
+    // // Walk the array
+    // while !lhs.is_empty() && !rhs.is_empty() {
+    //     let a = unsafe { lhs.get_unchecked(0) };
+    //     let b = unsafe { rhs.get_unchecked(0) };
+    //     match a.cmp(b) {
+    //         Less => {
+    //             vec.push(*a);
+    //             lhs = &lhs[1..];
+    //         }
+    //         Greater => {
+    //             vec.push(*b);
+    //             rhs = &rhs[1..];
+    //         }
+    //         Equal => {
+    //             vec.push(*a);
+    //             lhs = &lhs[1..];
+    //             rhs = &rhs[1..];
+    //         }
+    //     }
+    // }
+
+    // Store remaining elements of the arrays
+    vec.extend_from_slice(&lhs);
+    vec.extend_from_slice(&rhs);
+
+    vec
 }
 
 #[cfg(test)]

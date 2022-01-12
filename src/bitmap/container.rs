@@ -107,6 +107,11 @@ impl Container {
             }
         };
     }
+
+    pub fn union_gallop(&mut self, rhs: &Container) {
+        self.store.union_gallop(&rhs.store);
+        self.ensure_correct_store();
+    }
 }
 
 impl BitOr<&Container> for &Container {
