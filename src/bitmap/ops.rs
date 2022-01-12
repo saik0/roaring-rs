@@ -156,6 +156,7 @@ impl RoaringBitmap {
         BitXorAssign::bitxor_assign(self, other)
     }
 
+    /// TODO Docs
     pub fn union_with_gallop(&mut self, rhs: &RoaringBitmap) {
         for container in &rhs.containers {
             let key = container.key;

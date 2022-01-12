@@ -1,7 +1,6 @@
 use crate::bitmap::bitmap_8k::{bit, key, Bitmap8K, BITMAP_LENGTH};
 use crate::bitmap::store::Store;
 use crate::bitmap::store::Store::Bitmap;
-use std::cmp::Ordering;
 use std::cmp::Ordering::*;
 use std::convert::{TryFrom, TryInto};
 use std::fmt::{Display, Formatter};
@@ -211,9 +210,9 @@ impl TryFrom<Vec<u16>> for SortedU16Vec {
         if let Some((_, mut prev)) = iter.next() {
             for (i, cur) in iter {
                 match cur.cmp(prev) {
-                    Ordering::Less => return Err(Error { index: i, kind: ErrorKind::OutOfOrder }),
-                    Ordering::Equal => return Err(Error { index: i, kind: ErrorKind::Duplicate }),
-                    Ordering::Greater => {}
+                    Less => return Err(Error { index: i, kind: ErrorKind::OutOfOrder }),
+                    Equal => return Err(Error { index: i, kind: ErrorKind::Duplicate }),
+                    Greater => {}
                 }
                 prev = cur;
             }
@@ -419,9 +418,7 @@ impl BitXorAssign<&Self> for SortedU16Vec {
     }
 }
 
-macro_rules! dev_println {
-    ($($arg:tt)*) => (if cfg!(all(debug_assertions, not(test))) { println!($($arg)*); })
-}
+const MIN_GALLOP: usize = 7;
 
 pub fn union_gallop(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
     let mut vec = {
@@ -429,104 +426,117 @@ pub fn union_gallop(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
         Vec::with_capacity(capacity)
     };
 
-    dev_println!("lhs: {:?}", lhs);
-    dev_println!("rhs: {:?}", rhs);
-
-    let mut lhs_gallop: usize = 0;
-    let mut rhs_gallop: usize = 0;
-
-    // Traverse both arrays
-    while lhs.len() > 0 && rhs.len() > 0 {
-        let a = unsafe { lhs.get_unchecked(0) };
-        let b = unsafe { rhs.get_unchecked(0) };
-
-        dev_println!("a: {}, b: {}", a, b);
-
-        match a.cmp(b) {
-            Less => {
-                dev_println!("lt");
-                if lhs_gallop >= 7 {
-                    dev_println!("gallop lhs");
-                    let (i, j) = match lhs.binary_search(b) {
-                        Ok(v) => (v + 1, 1),
-                        Err(v) => (v, 0),
-                    };
-
-                    vec.extend_from_slice(&lhs[..i]);
-                    lhs = &lhs[i..];
-                    rhs = &rhs[j..];
-
-                    if i < 7 {
-                        lhs_gallop = 0;
-                    }
-                } else {
-                    vec.push(*a);
-                    lhs = &lhs[1..];
-                    lhs_gallop += 1;
-                }
-                rhs_gallop = 0;
-            }
-            Greater => {
-                dev_println!("gt");
-                if rhs_gallop >= 7 {
-                    dev_println!("gallop rhs");
-                    let (i, j) = match rhs.binary_search(a) {
-                        Ok(v) => (v + 1, 1),
-                        Err(v) => (v, 0),
-                    };
-
-                    vec.extend_from_slice(&rhs[..i]);
-                    rhs = &rhs[i..];
-                    lhs = &lhs[j..];
-                    if i < 7 {
-                        rhs_gallop = 0;
-                    }
-                } else {
-                    vec.push(*b);
-                    rhs = &rhs[1..];
-                    rhs_gallop += 1;
-                }
-                lhs_gallop = 0;
-            }
-            Equal => {
-                dev_println!("eq");
-                vec.push(*a);
-                lhs = &lhs[1..];
-                rhs = &rhs[1..];
-                lhs_gallop = 0;
-                rhs_gallop = 0;
-            }
-        }
-        dev_println!("lhs: {:?}", lhs);
-        dev_println!("rhs: {:?}", rhs);
-        dev_println!("vec: {:?}\n\n", vec);
+    // Handle degenerate cases
+    if lhs.is_empty() || rhs.is_empty() {
+        vec.extend_from_slice(lhs);
+        vec.extend_from_slice(rhs);
+        return vec;
     }
 
-    // dev_println!("\n\nwalk: {:?}\n\n", vec);
-    // // Walk the array
-    // while !lhs.is_empty() && !rhs.is_empty() {
-    //     let a = unsafe { lhs.get_unchecked(0) };
-    //     let b = unsafe { rhs.get_unchecked(0) };
-    //     match a.cmp(b) {
-    //         Less => {
-    //             vec.push(*a);
-    //             lhs = &lhs[1..];
-    //         }
-    //         Greater => {
-    //             vec.push(*b);
-    //             rhs = &rhs[1..];
-    //         }
-    //         Equal => {
-    //             vec.push(*a);
-    //             lhs = &lhs[1..];
-    //             rhs = &rhs[1..];
-    //         }
-    //     }
-    // }
+    let mut min_gallop = MIN_GALLOP;
+
+    'outer: loop {
+        let mut count1: usize = 0; // Number of times in a row that first run won
+        let mut count2: usize = 0; // Number of times in a row that second run won
+
+        // Do the straightforward thing until (if ever) one run starts
+        // winning consistently.
+        loop {
+            let a = &lhs[0];
+            let b = &rhs[0];
+
+            match a.cmp(b) {
+                Less => {
+                    vec.push(*a);
+                    lhs = &lhs[1..];
+                    count1 += 1;
+                    count2 = 0;
+                    if lhs.is_empty() {
+                        break 'outer;
+                    }
+                }
+                Greater => {
+                    vec.push(*b);
+                    rhs = &rhs[1..];
+                    count1 = 0;
+                    count2 += 1;
+                    if rhs.is_empty() {
+                        break 'outer;
+                    }
+                }
+                Equal => {
+                    vec.push(*a);
+                    lhs = &lhs[1..];
+                    rhs = &rhs[1..];
+                    count1 = 0;
+                    count2 = 0;
+                    if lhs.is_empty() || rhs.is_empty() {
+                        break 'outer;
+                    }
+                }
+            }
+            if (count1 | count2) >= min_gallop {
+                break;
+            }
+        }
+
+        // One run is winning so consistently that galloping may be a
+        // huge win. So try that, and continue galloping until (if ever)
+        // neither run appears to be winning consistently anymore.
+        loop {
+            match lhs.binary_search(&rhs[0]) {
+                Ok(i) => {
+                    vec.extend_from_slice(&lhs[..i + 1]);
+                    lhs = &lhs[i + 1..];
+                    rhs = &rhs[1..];
+                    count1 = i + 1;
+                    if lhs.is_empty() || rhs.is_empty() {
+                        break 'outer;
+                    }
+                }
+                Err(i) => {
+                    vec.extend_from_slice(&lhs[..i]);
+                    lhs = &lhs[i..];
+                    count1 = i;
+                    if lhs.is_empty() {
+                        break 'outer;
+                    }
+                }
+            };
+
+            match rhs.binary_search(&lhs[0]) {
+                Ok(i) => {
+                    vec.extend_from_slice(&rhs[..i + 1]);
+                    rhs = &rhs[i + 1..];
+                    lhs = &lhs[1..];
+                    count2 = i + 1;
+                    if lhs.is_empty() || rhs.is_empty() {
+                        break 'outer;
+                    }
+                }
+                Err(i) => {
+                    vec.extend_from_slice(&rhs[..i]);
+                    rhs = &rhs[i..];
+                    count2 = i;
+                    if rhs.is_empty() {
+                        break 'outer;
+                    }
+                }
+            };
+
+            min_gallop = min_gallop.saturating_sub(1);
+            if count1 < MIN_GALLOP && count2 < MIN_GALLOP {
+                break;
+            }
+        }
+
+        min_gallop += 2; // Penalize for leaving gallop mode
+    }
+    // end of 'outer loop
 
     // Store remaining elements of the arrays
-    vec.extend_from_slice(&lhs);
-    vec.extend_from_slice(&rhs);
+    vec.extend_from_slice(lhs);
+    vec.extend_from_slice(rhs);
 
     vec
 }

@@ -128,7 +128,7 @@ impl Store {
             (&mut Array(ref mut vec1), &Array(ref vec2)) => {
                 *vec1 = SortedU16Vec::from_vec_unchecked(union_gallop(
                     vec1.as_slice(),
-                    &vec2.as_slice(),
+                    vec2.as_slice(),
                 ));
             }
             (&mut Bitmap(ref mut bits1), &Array(ref vec2)) => {
