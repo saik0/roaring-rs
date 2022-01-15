@@ -1,5 +1,6 @@
 #[cfg(test)]
 #[allow(clippy::eq_op)] // Allow equal expressions as operands
+#[allow(clippy::redundant_clone)] // Allow equal expressions as operands
 mod test {
     use crate::RoaringBitmap;
     use proptest::prelude::*;
@@ -33,6 +34,26 @@ mod test {
             b in RoaringBitmap::arbitrary()
         ) {
             prop_assert_eq!(&a | &b, &b | &a);
+
+            { // op_assign_ref
+                let mut x = a.clone();
+                let mut y = b.clone();
+
+                x |= &b;
+                y |= &a;
+
+                prop_assert_eq!(x, y);
+            }
+
+            { // op_assign_own
+                let mut x = a.clone();
+                let mut y = b.clone();
+
+                x |= b.clone();
+                y |= a.clone();
+
+                prop_assert_eq!(x, y);
+            }
         }
 
         #[test]
@@ -41,6 +62,26 @@ mod test {
             b in RoaringBitmap::arbitrary()
         ) {
             prop_assert_eq!(&a & &b, &b & &a);
+
+            { // op_assign_ref
+                let mut x = a.clone();
+                let mut y = b.clone();
+
+                x &= &b;
+                y &= &a;
+
+                prop_assert_eq!(x, y);
+            }
+
+            { // op_assign_own
+                let mut x = a.clone();
+                let mut y = b.clone();
+
+                x &= b.clone();
+                y &= a.clone();
+
+                prop_assert_eq!(x, y);
+            }
         }
     }
 
@@ -59,6 +100,32 @@ mod test {
                 &a | ( &b | &c ),
                 ( &a | &b ) | &c
             );
+
+            { // op_assign_ref
+                let mut x = b.clone();
+                x |= &c;
+                x |= &a;
+
+                let mut y = a.clone();
+                y |= &b;
+                y |= &c;
+
+
+                prop_assert_eq!(x, y);
+            }
+
+            { // op_assign_own
+                let mut x = b.clone();
+                x |= c.clone();
+                x |= a.clone();
+
+                let mut y = a.clone();
+                y |= b.clone();
+                y |= c.clone();
+
+
+                prop_assert_eq!(x, y);
+            }
         }
 
         #[test]
@@ -71,6 +138,32 @@ mod test {
                 &a & ( &b & &c ),
                 ( &a & &b ) & &c
             );
+
+            { // op_assign_ref
+                let mut x = b.clone();
+                x &= &c;
+                x &= &a;
+
+                let mut y = a.clone();
+                y &= &b;
+                y &= &c;
+
+
+                prop_assert_eq!(x, y);
+            }
+
+            { // op_assign_own
+                let mut x = b.clone();
+                x &= c.clone();
+                x &= a.clone();
+
+                let mut y = a.clone();
+                y &= b.clone();
+                y &= c.clone();
+
+
+                prop_assert_eq!(x, y);
+            }
         }
     }
 
@@ -89,6 +182,45 @@ mod test {
                 &a | ( &b & &c),
                 ( &a | &b ) & ( &a | &c )
             );
+
+            { // op_assign_ref
+                let mut x = b.clone();
+                x &= &c;
+                x |= &a;
+
+                let y = {
+                    let mut ab = a.clone();
+                    ab |= &b;
+
+                    let mut ac = a.clone();
+                    ac |= &c;
+
+                    ab &= &ac;
+                    ab
+                };
+
+                prop_assert_eq!(x, y);
+            }
+
+            { // op_assign_own
+                let mut x = b.clone();
+                x &= c.clone();
+                x |= a.clone();
+
+                let y = {
+                    let mut ab = a.clone();
+                    ab |= b.clone();
+
+                    let mut ac = a.clone();
+                    ac |= c.clone();
+
+                    // moves the owned ac on the rhs
+                    ab &= ac;
+                    ab
+                };
+
+                prop_assert_eq!(x, y);
+            }
         }
 
         #[test]
@@ -101,6 +233,45 @@ mod test {
                 &a & ( &b | &c),
                 ( &a & &b ) | ( &a & &c )
             );
+
+            { // op_assign_ref
+                let mut x = b.clone();
+                x |= &c;
+                x &= &a;
+
+                let y = {
+                    let mut ab = a.clone();
+                    ab &= &b;
+
+                    let mut ac = a.clone();
+                    ac &= &c;
+
+                    ab |= &ac;
+                    ab
+                };
+
+                prop_assert_eq!(x, y);
+            }
+
+            { // op_assign_own
+                let mut x = b.clone();
+                x |= c.clone();
+                x &= a.clone();
+
+                let y = {
+                    let mut ab = a.clone();
+                    ab &= b.clone();
+
+                    let mut ac = a.clone();
+                    ac &= c.clone();
+
+                    // moves the owned ac on the rhs
+                    ab |= ac;
+                    ab
+                };
+
+                prop_assert_eq!(x, y);
+            }
         }
     }
 
@@ -110,7 +281,22 @@ mod test {
     proptest! {
         #[test]
         fn the_empty_set_is_the_identity_for_union(a in RoaringBitmap::arbitrary()) {
-            prop_assert_eq!(&a | &empty_set(), a);
+            prop_assert_eq!(&(&a | &empty_set()), &a);
+
+            { // op_assign_ref
+                let mut x = a.clone();
+                x |= &empty_set();
+
+                prop_assert_eq!(x, a.clone());
+            }
+
+            { // op_assign_own
+                let mut x = a.clone();
+                // empty_set() returns an owned empty set
+                x |= empty_set();
+
+                prop_assert_eq!(x, a.clone());
+            }
         }
     }
 
@@ -125,12 +311,40 @@ mod test {
     proptest! {
         #[test]
         fn unions_are_idempotent(a in RoaringBitmap::arbitrary()) {
-            prop_assert_eq!(&a | &a, a);
+            prop_assert_eq!(&(&a | &a), &a);
+
+            { // op_assign_ref
+                let mut x = a.clone();
+                x |= &a;
+
+                prop_assert_eq!(x, a.clone());
+            }
+
+            { // op_assign_own
+                let mut x = a.clone();
+                x |= a.clone();
+
+                prop_assert_eq!(x, a.clone());
+            }
         }
 
         #[test]
         fn intersections_are_idempotent(a in RoaringBitmap::arbitrary()) {
-            prop_assert_eq!(&a & &a, a);
+            prop_assert_eq!(&(&a & &a), &a);
+
+            { // op_assign_ref
+                let mut x = a.clone();
+                x &= &a;
+
+                prop_assert_eq!(x, a.clone());
+            }
+
+            { // op_assign_own
+                let mut x = a.clone();
+                x &= a.clone();
+
+                prop_assert_eq!(x, a.clone());
+            }
         }
     }
 
@@ -142,12 +356,29 @@ mod test {
         #[test]
         fn empty_set_domination(a in RoaringBitmap::arbitrary()) {
             prop_assert_eq!(&a & &empty_set(), empty_set());
+
+            { // op_assign_ref
+                let mut x = a.clone();
+                x &= &empty_set();
+
+                prop_assert_eq!(x, empty_set());
+            }
+
+            { // op_assign_own
+                let mut x = a.clone();
+                x &= empty_set();
+
+                prop_assert_eq!(x, empty_set());
+            }
         }
     }
 
     // The algebra of inclusion
     // ========================
     // PROPOSITION 6: If A, B and C are sets then the following hold:
+    //
+    // Note that for inclusion we do not also assert for the assignment operators
+    // Inclusion is the property under test, not the set operation
 
     proptest! {
         #[test]
