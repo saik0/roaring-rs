@@ -18,6 +18,13 @@ impl RoaringBitmap {
         RoaringBitmap { containers: Vec::new() }
     }
 
+    /// TODO Docs
+    pub fn shrink_to_fit(&mut self) {
+        for container in self.containers.iter_mut() {
+            container.store.shrink_to_fit();
+        }
+    }
+
     /// Adds a value to the set.
     ///
     /// Returns whether the value was absent from the set.

@@ -5,6 +5,7 @@ use retain_mut::RetainMut;
 
 use crate::bitmap::container::Container;
 use crate::bitmap::Pairs;
+use crate::bitmap::store::BitmapStore;
 use crate::RoaringBitmap;
 
 impl RoaringBitmap {
@@ -154,6 +155,17 @@ impl RoaringBitmap {
     )]
     pub fn symmetric_difference_with(&mut self, other: &RoaringBitmap) {
         BitXorAssign::bitxor_assign(self, other)
+    }
+
+    /// TODO Docs
+    pub fn union_with_gallop(&mut self, rhs: &RoaringBitmap) {
+        for container in &rhs.containers {
+            let key = container.key;
+            match self.containers.binary_search_by_key(&key, |c| c.key) {
+                Err(loc) => self.containers.insert(loc, container.clone()),
+                Ok(loc) => self.containers[loc].union_gallop(container),
+            }
+        }
     }
 }
 

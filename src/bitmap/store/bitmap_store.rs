@@ -324,26 +324,41 @@ fn op_bitmaps(bits1: &mut BitmapStore, bits2: &BitmapStore, op: impl Fn(&mut u64
 
 impl BitOrAssign<&Self> for BitmapStore {
     fn bitor_assign(&mut self, rhs: &Self) {
-        op_bitmaps(self, rhs, BitOrAssign::bitor_assign);
+        or_assign_bitmap_bitmap(self, rhs)
     }
 }
 
 impl BitOrAssign<&ArrayStore> for BitmapStore {
     fn bitor_assign(&mut self, rhs: &ArrayStore) {
-        for &index in rhs.iter() {
-            let (key, bit) = (key(index), bit(index));
-            let old_w = self.bits[key];
-            let new_w = old_w | 1 << bit;
-            self.len += (old_w ^ new_w) >> bit;
-            self.bits[key] = new_w;
-        }
+        or_assign_bitmap_array(self, rhs)
     }
+}
+
+#[inline(never)]
+fn or_assign_bitmap_array(bitmap: &mut BitmapStore, rhs: & ArrayStore) {
+    for &index in rhs.iter() {
+        let (key, bit) = (key(index), bit(index));
+        let old_w = bitmap.bits[key];
+        let new_w = old_w | 1 << bit;
+        bitmap.len += (old_w ^ new_w) >> bit;
+        bitmap.bits[key] = new_w;
+    }
+}
+
+#[inline(never)]
+fn or_assign_bitmap_bitmap(bitmap: &mut BitmapStore, rhs: & BitmapStore) {
+    op_bitmaps(bitmap, rhs, BitOrAssign::bitor_assign);
 }
 
 impl BitAndAssign<&Self> for BitmapStore {
     fn bitand_assign(&mut self, rhs: &Self) {
-        op_bitmaps(self, rhs, BitAndAssign::bitand_assign);
+        and_assign_bitmap_bitmap(self, rhs);
     }
+}
+
+#[inline(never)]
+fn and_assign_bitmap_bitmap(lhs: &mut BitmapStore, rhs: & BitmapStore) {
+    op_bitmaps(lhs, rhs, BitAndAssign::bitand_assign);
 }
 
 impl SubAssign<&Self> for BitmapStore {

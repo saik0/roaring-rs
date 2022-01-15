@@ -31,6 +31,13 @@ impl Store {
         Store::Array(ArrayStore::new())
     }
 
+    pub fn shrink_to_fit(&mut self) {
+        match self {
+            Array(vec) => vec.shrink_to_fit(),
+            Bitmap(..) => (),
+        }
+    }
+
     pub fn insert(&mut self, index: u16) -> bool {
         match *self {
             Array(ref mut vec) => vec.insert(index),
@@ -136,6 +143,28 @@ impl Store {
         match *self {
             Array(ref vec) => vec.max(),
             Bitmap(ref bits) => bits.max(),
+        }
+    }
+
+    pub fn union_gallop(&mut self, rhs: &Store) {
+        match (self, &rhs) {
+            (&mut Array(ref mut vec1), &Array(ref vec2)) => {
+                *vec1 = ArrayStore::from_vec_unchecked(array_store::union_gallop(
+                    vec1.as_slice(),
+                    vec2.as_slice(),
+                ));
+            }
+            (&mut Bitmap(ref mut bits1), &Array(ref vec2)) => {
+                BitOrAssign::bitor_assign(bits1, vec2);
+            }
+            (&mut Bitmap(ref mut bits1), &Bitmap(ref bits2)) => {
+                BitOrAssign::bitor_assign(bits1, bits2);
+            }
+            (this @ &mut Array(..), &Bitmap(ref bits2)) => {
+                let mut lhs: Store = Bitmap(bits2.clone());
+                BitOrAssign::bitor_assign(&mut lhs, &*this);
+                *this = lhs;
+            }
         }
     }
 }

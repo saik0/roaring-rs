@@ -1,3 +1,5 @@
+use crate::bitmap::store::Store;
+use crate::bitmap::store::Store::Bitmap;
 use std::cmp::Ordering;
 use std::cmp::Ordering::*;
 use std::convert::{TryFrom, TryInto};
@@ -30,6 +32,10 @@ impl ArrayStore {
         } else {
             ArrayStore { vec }
         }
+    }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.vec.shrink_to_fit();
     }
 
     pub fn insert(&mut self, index: u16) -> bool {
@@ -222,9 +228,9 @@ impl TryFrom<Vec<u16>> for ArrayStore {
         if let Some((_, mut prev)) = iter.next() {
             for (i, cur) in iter {
                 match cur.cmp(prev) {
-                    Ordering::Less => return Err(Error { index: i, kind: ErrorKind::OutOfOrder }),
-                    Ordering::Equal => return Err(Error { index: i, kind: ErrorKind::Duplicate }),
-                    Ordering::Greater => (),
+                    Less => return Err(Error { index: i, kind: ErrorKind::OutOfOrder }),
+                    Equal => return Err(Error { index: i, kind: ErrorKind::Duplicate }),
+                    Greater => (),
                 }
                 prev = cur;
             }
@@ -238,83 +244,90 @@ impl BitOr<Self> for &ArrayStore {
     type Output = ArrayStore;
 
     fn bitor(self, rhs: Self) -> Self::Output {
-        let mut vec = {
-            let capacity = (self.vec.len() + rhs.vec.len()).min(4096);
-            Vec::with_capacity(capacity)
-        };
+        or_array_array(self, rhs)
+    }
+}
 
-        // Traverse both arrays
-        let mut i = 0;
-        let mut j = 0;
-        while i < self.vec.len() && j < rhs.vec.len() {
-            let a = unsafe { self.vec.get_unchecked(i) };
-            let b = unsafe { rhs.vec.get_unchecked(j) };
-            match a.cmp(b) {
-                Less => {
-                    vec.push(*a);
-                    i += 1;
-                }
-                Greater => {
-                    vec.push(*b);
-                    j += 1;
-                }
-                Equal => {
-                    vec.push(*a);
-                    i += 1;
-                    j += 1;
-                }
+#[inline(never)]
+fn or_array_array(lhs: &ArrayStore, rhs: & ArrayStore) -> ArrayStore {
+    let mut vec = Vec::new();
+
+    // Traverse both arrays
+    let mut i = 0;
+    let mut j = 0;
+    while i < lhs.vec.len() && j < rhs.vec.len() {
+        let a = unsafe { lhs.vec.get_unchecked(i) };
+        let b = unsafe { rhs.vec.get_unchecked(j) };
+        match a.cmp(b) {
+            Less => i += 1,
+            Greater => j += 1,
+            Equal => {
+                vec.push(*a);
+                i += 1;
+                j += 1;
             }
         }
-
-        // Store remaining elements of the arrays
-        vec.extend_from_slice(&self.vec[i..]);
-        vec.extend_from_slice(&rhs.vec[j..]);
-
-        ArrayStore { vec }
     }
+
+    ArrayStore { vec }
 }
 
 impl BitAnd<Self> for &ArrayStore {
     type Output = ArrayStore;
 
     fn bitand(self, rhs: Self) -> Self::Output {
-        let mut vec = Vec::new();
-
-        // Traverse both arrays
-        let mut i = 0;
-        let mut j = 0;
-        while i < self.vec.len() && j < rhs.vec.len() {
-            let a = unsafe { self.vec.get_unchecked(i) };
-            let b = unsafe { rhs.vec.get_unchecked(j) };
-            match a.cmp(b) {
-                Less => i += 1,
-                Greater => j += 1,
-                Equal => {
-                    vec.push(*a);
-                    i += 1;
-                    j += 1;
-                }
-            }
-        }
-
-        ArrayStore { vec }
+        and_array_array(self, rhs)
     }
 }
 
 impl BitAndAssign<&Self> for ArrayStore {
     fn bitand_assign(&mut self, rhs: &Self) {
-        let mut i = 0;
-        self.vec.retain(|x| {
-            i += rhs.iter().skip(i).position(|y| y >= x).unwrap_or(rhs.vec.len());
-            rhs.vec.get(i).map_or(false, |y| x == y)
-        });
+        and_assign_array_array(self, rhs);
     }
 }
 
 impl BitAndAssign<&BitmapStore> for ArrayStore {
     fn bitand_assign(&mut self, rhs: &BitmapStore) {
-        self.vec.retain(|x| rhs.contains(*x));
+        and_assign_array_bitmap(self, rhs);
     }
+}
+
+#[inline(never)]
+fn and_array_array(lhs: &ArrayStore, rhs: & ArrayStore) -> ArrayStore {
+    let mut vec = Vec::new();
+
+    // Traverse both arrays
+    let mut i = 0;
+    let mut j = 0;
+    while i < lhs.vec.len() && j < rhs.vec.len() {
+        let a = unsafe { lhs.vec.get_unchecked(i) };
+        let b = unsafe { rhs.vec.get_unchecked(j) };
+        match a.cmp(b) {
+            Less => i += 1,
+            Greater => j += 1,
+            Equal => {
+                vec.push(*a);
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+
+    ArrayStore { vec }
+}
+
+#[inline(never)]
+fn and_assign_array_array(lhs: &mut ArrayStore, rhs: & ArrayStore) {
+    let mut i = 0;
+    lhs.vec.retain(|x| {
+        i += rhs.iter().skip(i).position(|y| y >= x).unwrap_or(rhs.vec.len());
+        rhs.vec.get(i).map_or(false, |y| x == y)
+    });
+}
+
+#[inline(never)]
+fn and_assign_array_bitmap(lhs: &mut ArrayStore, rhs: & BitmapStore) {
+    lhs.vec.retain(|x| rhs.contains(*x));
 }
 
 impl Sub<Self> for &ArrayStore {
@@ -428,6 +441,175 @@ impl BitXorAssign<&Self> for ArrayStore {
             self.vec.extend(iter2.cloned());
         }
     }
+}
+
+macro_rules! dev_println {
+    ($($arg:tt)*) => (if cfg!(all(debug_assertions, not(test))) { println!($($arg)*); })
+}
+
+const MIN_GALLOP: usize = 7;
+
+#[inline(never)]
+pub fn union_gallop(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
+    let mut vec = {
+        let capacity = (lhs.len() + rhs.len()).min(4096);
+        Vec::with_capacity(capacity)
+    };
+
+    // Handle degenerate cases
+    if lhs.is_empty() || rhs.is_empty() {
+        vec.extend_from_slice(&lhs);
+        vec.extend_from_slice(&rhs);
+        return vec;
+    }
+
+    let mut min_gallop = MIN_GALLOP;
+
+    'outer: loop {
+        let mut count1: usize = 0; // Number of times in a row that first run won
+        let mut count2: usize = 0; // Number of times in a row that second run won
+
+
+        // Do the straightforward thing until (if ever) one run starts
+        // winning consistently.
+        dev_println!("enter walk");
+        loop {
+            dev_println!("lhs: {:?}", lhs);
+            dev_println!("rhs: {:?}", rhs);
+
+            let a = &lhs[0];
+            let b = &rhs[0];
+
+            match a.cmp(b) {
+                Less => {
+                    dev_println!("l");
+                    vec.push(*a);
+                    lhs = &lhs[1..];
+                    count1 += 1;
+                    count2 = 0;
+                    dev_println!("vec: {:?}\n\n", vec);
+                    if lhs.is_empty() { break 'outer; }
+                }
+                Greater => {
+                    dev_println!("r");
+                    vec.push(*b);
+                    rhs = &rhs[1..];
+                    count1 = 0;
+                    count2 += 1;
+                    dev_println!("vec: {:?}\n\n", vec);
+                    if rhs.is_empty() { break 'outer; }
+                }
+                Equal => {
+                    dev_println!("l+r");
+                    vec.push(*a);
+                    lhs = &lhs[1..];
+                    rhs = &rhs[1..];
+                    count1 = 0;
+                    count2 = 0;
+                    dev_println!("vec: {:?}\n\n", vec);
+                    if lhs.is_empty() || rhs.is_empty() { break 'outer; }
+                }
+            }
+            if (count1 | count2) >= min_gallop { break; }
+        }
+
+
+        // One run is winning so consistently that galloping may be a
+        // huge win. So try that, and continue galloping until (if ever)
+        // neither run appears to be winning consistently anymore.
+        dev_println!("enter gallop");
+        loop {
+            dev_println!("lhs: {:?}", lhs);
+            dev_println!("rhs: {:?}", rhs);
+            match exponential_search(&lhs, &rhs[0]) {
+                Ok(v) => {
+                    vec.extend_from_slice(&lhs[..v + 1]);
+                    lhs = &lhs[v + 1..];
+                    rhs = &rhs[1..];
+                    count1 = v + 1;
+                    dev_println!("galloped left {}", count1);
+                    dev_println!("vec: {:?}\n\n", vec);
+                    if lhs.is_empty() || rhs.is_empty() { break 'outer; }
+                }
+                Err(v) => {
+                    vec.extend_from_slice(&lhs[..v]);
+                    lhs = &lhs[v..];
+                    count1 = v;
+                    dev_println!("galloped left {}", count1);
+                    dev_println!("vec: {:?}\n\n", vec);
+                    if lhs.is_empty() { break 'outer; }
+                }
+            };
+
+            dev_println!("lhs: {:?}", lhs);
+            dev_println!("rhs: {:?}", rhs);
+            match exponential_search(&rhs, &lhs[0]) {
+                Ok(v) => {
+                    vec.extend_from_slice(&rhs[..v + 1]);
+                    rhs = &rhs[v + 1..];
+                    lhs = &lhs[1..];
+                    count2 = v + 1;
+                    dev_println!("galloped right {}", count2);
+                    dev_println!("vec: {:?}\n\n", vec);
+                    if lhs.is_empty() || rhs.is_empty() { break 'outer; }
+                }
+                Err(v) => {
+                    vec.extend_from_slice(&rhs[..v]);
+                    rhs = &rhs[v..];
+                    count2 = v;
+                    dev_println!("galloped right {}", count2);
+                    dev_println!("vec: {:?}\n\n", vec);
+                    if rhs.is_empty() { break 'outer; }
+                }
+            };
+
+            min_gallop = min_gallop.saturating_sub(1);
+            if count1 < MIN_GALLOP && count2 < MIN_GALLOP { break; }
+        }
+
+        min_gallop += 2; // Penalize for leaving gallop mode
+    }
+    // end of 'outer loop
+    dev_println!("end outer");
+
+    // Store remaining elements of the arrays
+    vec.extend_from_slice(&lhs);
+    vec.extend_from_slice(&rhs);
+
+    vec
+}
+
+#[inline]
+fn exponential_search<T>(slice: &[T], elem: &T) -> Result<usize, usize>
+    where T: Ord
+{
+    exponential_search_by(slice, |x| x.cmp(elem))
+}
+
+#[inline]
+fn exponential_search_by<T, F>(slice: &[T], mut f: F) -> Result<usize, usize>
+    where F: FnMut(&T) -> Ordering,
+{
+    let mut index = 1;
+    while index < slice.len() && f(&slice[index]) == Ordering::Less {
+        index *= 2;
+    }
+
+    let half_bound = index / 2;
+    let bound = std::cmp::min(index + 1, slice.len());
+
+    match slice[half_bound..bound].binary_search_by(f) {
+        Ok(pos) => Ok(half_bound + pos),
+        Err(pos) => Err(half_bound + pos),
+    }
+}
+
+#[inline]
+fn exponential_search_by_key<T, B, F>(slice: &[T], b: &B, mut f: F) -> Result<usize, usize>
+    where F: FnMut(&T) -> B,
+          B: Ord
+{
+    exponential_search_by(slice, |k| f(k).cmp(b))
 }
 
 #[cfg(test)]

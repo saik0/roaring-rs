@@ -8,11 +8,14 @@ publish = false
 
 [dependencies]
 roaring = { path = ".." }
+croaring = "0.5.1"
 
 [dev-dependencies]
-criterion = { version = "0.3", features = ["html_reports"] }
+criterion = { version = "0.3.5", features = ["html_reports"] }
 quickcheck = "0.9"
 quickcheck_macros = "0.9"
+itertools = "0.10.3"
+lazy_static = "1.4.0"
 
 [build-dependencies]
 anyhow = "1.0"
@@ -24,3 +27,6 @@ zip = "0.5.12"
 [[bench]]
 name = "lib"
 harness = false
+
+[profile.bench]
+debug = true
