@@ -1359,24 +1359,13 @@ fn intersect_skewed_large_unchecked(small: &[u16], large: &mut Vec<u16>) {
 //#[inline(never)]
 // #[inline]
 fn and_assign_opt(lhs: &mut Vec<u16>, rhs: &[u16]) {
-    // const THRESHOLD: usize = 64;
-    // if lhs.len() * THRESHOLD < rhs.len() {
-    //     intersect_skewed_small(lhs, rhs);
-    // } else if rhs.len() * THRESHOLD < lhs.len() {
-    //     intersect_skewed_large(rhs, lhs);
-    // } else {
-    //     and_assign_run(lhs, rhs);
-    // }
-
-    unsafe {
-        const THRESHOLD: usize = 64;
-        if lhs.len() * THRESHOLD < rhs.len() {
-            intersect_skewed_small_unchecked(lhs, rhs);
-        } else if rhs.len() * THRESHOLD < lhs.len() {
-            intersect_skewed_large_unchecked(rhs, lhs);
-        } else {
-            and_assign_run_unchecked(lhs, rhs);
-        }
+    const THRESHOLD: usize = 64;
+    if lhs.len() * THRESHOLD < rhs.len() {
+        intersect_skewed_small(lhs, rhs);
+    } else if rhs.len() * THRESHOLD < lhs.len() {
+        intersect_skewed_large(rhs, lhs);
+    } else {
+        and_assign_run(lhs, rhs);
     }
 }
 
