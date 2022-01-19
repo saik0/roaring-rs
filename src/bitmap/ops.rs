@@ -6,6 +6,7 @@ use retain_mut::RetainMut;
 use crate::bitmap::container::Container;
 use crate::bitmap::Pairs;
 use crate::bitmap::store::BitmapStore;
+use crate::bitmap::util::exponential_search_by_key;
 use crate::RoaringBitmap;
 
 impl RoaringBitmap {
@@ -166,6 +167,148 @@ impl RoaringBitmap {
                 Ok(loc) => self.containers[loc].union_gallop(container),
             }
         }
+    }
+
+    pub fn union_with_vector(&mut self, rhs: &RoaringBitmap) {
+        for container in &rhs.containers {
+            let key = container.key;
+            match self.containers.binary_search_by_key(&key, |c| c.key) {
+                Err(loc) => self.containers.insert(loc, container.clone()),
+                Ok(loc) => self.containers[loc].or_assign_vector(container),
+            }
+        }
+    }
+
+
+    pub fn and_vector(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
+        let mut containers = Vec::new();
+
+        for pair in Pairs::new(&self.containers, &rhs.containers) {
+            if let (Some(lhs), Some(rhs)) = pair {
+                let container = lhs.and_vector(rhs);
+                if container.len() != 0 {
+                    containers.push(container);
+                }
+            }
+        }
+
+        RoaringBitmap { containers }
+    }
+
+    pub fn and_opt_unsafe(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
+        let mut containers = Vec::new();
+
+        for pair in Pairs::new(&self.containers, &rhs.containers) {
+            if let (Some(lhs), Some(rhs)) = pair {
+                let container = lhs.and_opt_unsafe(rhs);
+                if container.len() != 0 {
+                    containers.push(container);
+                }
+            }
+        }
+
+        RoaringBitmap { containers }
+    }
+
+    pub fn and_assign_linear(&mut self, rhs: &RoaringBitmap) {
+        let mut other = &rhs.containers[..];
+        RetainMut::retain_mut(&mut self.containers, move |cont| {
+            let key = cont.key;
+            match exponential_search_by_key(other, &key, |c| c.key) {
+                Ok(loc) => {
+                    BitAndAssign::bitand_assign(cont, &other[loc]);
+                    other = &other[loc+1..];
+                    cont.len() != 0
+                }
+                Err(loc) => {
+                    other = &other[loc..];
+                    false
+                },
+            }
+        })
+    }
+
+    pub fn and_assign_walk(&mut self, rhs: &RoaringBitmap) {
+        RetainMut::retain_mut(&mut self.containers, |cont| {
+            let key = cont.key;
+            match rhs.containers.binary_search_by_key(&key, |c| c.key) {
+                Ok(loc) => {
+                    cont.and_assign_walk(&rhs.containers[loc]);
+                    cont.len() != 0
+                }
+                Err(_) => false,
+            }
+        })
+    }
+
+    pub fn and_assign_run(&mut self, rhs: &RoaringBitmap) {
+        RetainMut::retain_mut(&mut self.containers, |cont| {
+            let key = cont.key;
+            match rhs.containers.binary_search_by_key(&key, |c| c.key) {
+                Ok(loc) => {
+                    cont.and_assign_run(&rhs.containers[loc]);
+                    cont.len() != 0
+                }
+                Err(_) => false,
+            }
+        })
+    }
+
+    pub fn and_assign_gallop(&mut self, rhs: &RoaringBitmap) {
+        RetainMut::retain_mut(&mut self.containers, |cont| {
+            let key = cont.key;
+            match rhs.containers.binary_search_by_key(&key, |c| c.key) {
+                Ok(loc) => {
+                    cont.and_assign_gallop(&rhs.containers[loc]);
+                    cont.len() != 0
+                }
+                Err(_) => false,
+            }
+        })
+    }
+
+    pub fn and_assign_opt(&mut self, rhs: &RoaringBitmap) {
+        let mut other = &rhs.containers[..];
+        RetainMut::retain_mut(&mut self.containers, move |cont| {
+            let key = cont.key;
+            match other.binary_search_by_key(&key, |c| c.key) {
+                Ok(loc) => {
+                    cont.and_assign_opt(&other[loc]);
+                    other = &other[loc + 1..];
+                    cont.len() != 0
+                }
+                Err(loc) => {
+                    other = &other[loc..];
+                    false
+                },
+            }
+        })
+    }
+
+    pub fn and_assign_opt_unsafe(&mut self, rhs: &RoaringBitmap) {
+        RetainMut::retain_mut(&mut self.containers, |cont| {
+            let key = cont.key;
+            match rhs.containers.binary_search_by_key(&key, |c| c.key) {
+                Ok(loc) => {
+                    cont.and_assign_opt_unsafe(&rhs.containers[loc]);
+                    cont.len() != 0
+                }
+                Err(_) => false,
+            }
+        })
+    }
+
+    pub fn and_assign_vector(&mut self, rhs: &RoaringBitmap) {
+        RetainMut::retain_mut(&mut self.containers, |cont| {
+            let key = cont.key;
+            match rhs.containers.binary_search_by_key(&key, |c| c.key) {
+                Ok(loc) => {
+                    cont.and_assign_vector(&rhs.containers[loc]);
+                    cont.len() != 0
+                }
+                Err(_) => false,
+            }
+        })
     }
 }
 

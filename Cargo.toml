@@ -18,6 +18,8 @@ license = "MIT OR Apache-2.0"
 bytemuck = "1.7.2"
 byteorder = "1.4.3"
 retain_mut = "0.1.4"
+itertools = "0.10.3"
+likely_stable = "0.1"
 
 [dev-dependencies]
 proptest = { version = "1.0.0" }

@@ -123,6 +123,55 @@ impl Container {
         self.store.union_gallop(&rhs.store);
         self.ensure_correct_store();
     }
+
+    pub fn or_assign_vector(&mut self, rhs: &Container) {
+        self.store.union_vector(&rhs.store);
+        self.ensure_correct_store();
+    }
+
+    pub fn and_vector(&self, rhs: &Container) -> Container {
+        let store = self.store.and_vector(&rhs.store);
+        let mut container = Container { key: self.key, store };
+        container.ensure_correct_store();
+        container
+    }
+
+    pub fn and_opt_unsafe(&self, rhs: &Container) -> Container {
+        let store = self.store.and_opt_unsafe(&rhs.store);
+        let mut container = Container { key: self.key, store };
+        container.ensure_correct_store();
+        container
+    }
+
+    pub fn and_assign_walk(&mut self, rhs: &Container) {
+        self.store.and_assign_walk(&rhs.store);
+        self.ensure_correct_store();
+    }
+
+    pub fn and_assign_run(&mut self, rhs: &Container) {
+        self.store.and_assign_run(&rhs.store);
+        self.ensure_correct_store();
+    }
+
+    pub fn and_assign_gallop(&mut self, rhs: &Container) {
+        self.store.and_assign_gallop(&rhs.store);
+        self.ensure_correct_store();
+    }
+
+    pub fn and_assign_opt(&mut self, rhs: &Container) {
+        self.store.and_assign_opt(&rhs.store);
+        self.ensure_correct_store();
+    }
+
+    pub fn and_assign_opt_unsafe(&mut self, rhs: &Container) {
+        self.store.and_assign_opt_unsafe(&rhs.store);
+        self.ensure_correct_store();
+    }
+
+    pub fn and_assign_vector(&mut self, rhs: &Container) {
+        self.store.and_assign_vector(&rhs.store);
+        self.ensure_correct_store();
+    }
 }
 
 impl BitOr<&Container> for &Container {

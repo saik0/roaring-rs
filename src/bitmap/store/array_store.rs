@@ -1,3 +1,5 @@
+use std::borrow::{Borrow, BorrowMut};
+use crate::bitmap::util::exponential_search;
 use crate::bitmap::store::Store;
 use crate::bitmap::store::Store::Bitmap;
 use std::cmp::Ordering;
@@ -5,8 +7,15 @@ use std::cmp::Ordering::*;
 use std::convert::{TryFrom, TryInto};
 use std::fmt::{Display, Formatter};
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitXor, BitXorAssign, RangeInclusive, Sub, SubAssign};
+use std::ptr::slice_from_raw_parts_mut;
+use std::cell::{Cell, RefCell};
+use std::pin::Pin;
+use crate::bitmap::store::op_vector::{intersect_assign_vector, intersect_vector};
 
 use super::bitmap_store::{bit, key, BitmapStore, BITMAP_LENGTH};
+
+thread_local!(static THREAD_LOCAL_ARRAY: Cell<Option<Vec<u16>>> = Cell::new(None));
+
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct ArrayStore {
@@ -248,7 +257,7 @@ impl BitOr<Self> for &ArrayStore {
     }
 }
 
-#[inline(never)]
+// #[inline]
 fn or_array_array(lhs: &ArrayStore, rhs: & ArrayStore) -> ArrayStore {
     let mut vec = Vec::new();
 
@@ -259,8 +268,14 @@ fn or_array_array(lhs: &ArrayStore, rhs: & ArrayStore) -> ArrayStore {
         let a = unsafe { lhs.vec.get_unchecked(i) };
         let b = unsafe { rhs.vec.get_unchecked(j) };
         match a.cmp(b) {
-            Less => i += 1,
-            Greater => j += 1,
+            Less => {
+                vec.push(*a);
+                i += 1
+            },
+            Greater => {
+                vec.push(*b);
+                j += 1
+            },
             Equal => {
                 vec.push(*a);
                 i += 1;
@@ -268,6 +283,9 @@ fn or_array_array(lhs: &ArrayStore, rhs: & ArrayStore) -> ArrayStore {
             }
         }
     }
+
+    vec.extend_from_slice(&lhs.vec[i..]);
+    vec.extend_from_slice(&rhs.vec[j..]);
 
     ArrayStore { vec }
 }
@@ -292,7 +310,8 @@ impl BitAndAssign<&BitmapStore> for ArrayStore {
     }
 }
 
-#[inline(never)]
+//#[inline(never)]
+// #[inline]
 fn and_array_array(lhs: &ArrayStore, rhs: & ArrayStore) -> ArrayStore {
     let mut vec = Vec::new();
 
@@ -316,7 +335,8 @@ fn and_array_array(lhs: &ArrayStore, rhs: & ArrayStore) -> ArrayStore {
     ArrayStore { vec }
 }
 
-#[inline(never)]
+//#[inline(never)]
+// #[inline]
 fn and_assign_array_array(lhs: &mut ArrayStore, rhs: & ArrayStore) {
     let mut i = 0;
     lhs.vec.retain(|x| {
@@ -325,7 +345,261 @@ fn and_assign_array_array(lhs: &mut ArrayStore, rhs: & ArrayStore) {
     });
 }
 
-#[inline(never)]
+//#[inline(never)]
+// #[inline]
+pub fn and_assign_array_walk(lhs: &mut ArrayStore, rhs: & ArrayStore) {
+    and_assign_walk(&mut lhs.vec, rhs.as_slice());
+}
+
+//#[inline(never)]
+// #[inline]
+pub fn and_assign_array_run(lhs: &mut ArrayStore, rhs: & ArrayStore) {
+    and_assign_run(&mut lhs.vec, rhs.as_slice());
+}
+
+//#[inline(never)]
+// #[inline]
+pub fn and_assign_array_gallop(lhs: &mut ArrayStore, rhs: & ArrayStore) {
+    and_assign_gallop(&mut lhs.vec, rhs.as_slice());
+}
+
+//#[inline(never)]
+// #[inline]
+pub fn and_assign_array_opt(lhs: &mut ArrayStore, rhs: & ArrayStore) {
+    and_assign_opt(&mut lhs.vec, rhs.vec.as_slice())
+}
+
+//#[inline(never)]
+// #[inline]
+pub fn and_assign_array_opt_unsafe(lhs: &mut ArrayStore, rhs: & ArrayStore) {
+    and_assign_opt_unchecked(&mut lhs.vec, rhs.vec.as_slice())
+}
+
+pub fn and_assign_array_vector(lhs: &mut ArrayStore, rhs: & ArrayStore) {
+    // unsafe { and_assign_opt_unsafe(&mut lhs.vec, rhs.vec.as_slice()) }
+    const THRESHOLD: usize = 64;
+    if lhs.vec.len() * THRESHOLD < rhs.vec.len() {
+        intersect_skewed_small_unchecked(&mut lhs.vec, rhs.as_slice());
+    } else if rhs.vec.len() * THRESHOLD < lhs.vec.len() {
+        intersect_skewed_large_unchecked(rhs.as_slice(), &mut lhs.vec);
+    } else {
+        THREAD_LOCAL_ARRAY.with(|cell| {
+            // intersect_assign_vector must reserve sufficient capacity within it's body
+            // however, if a new vec does need to be allocated, ensure it's already large enough
+            let mut buf = match cell.replace(None) {
+                None => { Vec::with_capacity(lhs.vec.len().min(rhs.vec.len())) }
+                Some(vec) => { vec }
+            };
+            intersect_assign_vector(lhs.as_slice(), rhs.as_slice(), &mut buf);
+            std::mem::swap(&mut lhs.vec, &mut buf);
+            cell.set(Some(buf));
+        })
+    }
+}
+
+// #[inline(never)]
+fn and_assign_walk(lhs: &mut Vec<u16>, rhs: &[u16]) {
+    let mut i = 0;
+    let mut j = 0;
+    let mut k = 0;
+    while i < lhs.len() && j < rhs.len() {
+        let a = unsafe { lhs.get_unchecked(i) };
+        let b = unsafe { rhs.get_unchecked(j) };
+        match a.cmp(b) {
+            Less => {
+                i += 1;
+            }
+            Greater => {
+                j += 1;
+            }
+            Equal => {
+                lhs[k] = *a;
+                i += 1;
+                j += 1;
+                k += 1;
+            }
+        }
+    }
+
+    lhs.truncate(k);
+}
+
+//#[inline(never)]
+// #[inline]
+pub fn and_assign_run(lhs: &mut Vec<u16>, rhs: &[u16]) {
+    if lhs.is_empty() || rhs.is_empty() {
+        lhs.clear();
+        return;
+    }
+
+    let mut i = 0;
+    let mut j = 0;
+    let mut k = 0;
+
+    'outer: loop {
+        while lhs[i] < rhs[j] {
+            i +=1;
+            if i == lhs.len() { break 'outer }
+        }
+        while lhs[i] > rhs[j] {
+            j +=1;
+            if j == rhs.len() { break 'outer }
+        }
+        if lhs[i] == rhs[j] {
+            lhs[k] = lhs[i];
+            i += 1;
+            j += 1;
+            k += 1;
+            if i == lhs.len() || j == rhs.len() { break 'outer }
+        }
+    }
+
+    lhs.truncate(k);
+}
+
+/// This is called 'run' because of the two inner while loops
+// If they were 'if'
+#[inline]
+pub fn and_assign_run_unchecked(lhs: &mut Vec<u16>, rhs: &[u16]) {
+    if lhs.is_empty() || rhs.is_empty() {
+        lhs.clear();
+        return;
+    }
+
+    let mut i = 0;
+    let mut j = 0;
+    let mut k = 0;
+
+    unsafe {
+        'outer: loop {
+            while *lhs.get_unchecked(i) < *rhs.get_unchecked(j) {
+                i +=1;
+                if i == lhs.len() { break 'outer }
+            }
+            while *lhs.get_unchecked(i) > *rhs.get_unchecked(j) {
+                j +=1;
+                if j == rhs.len() { break 'outer }
+            }
+            if *lhs.get_unchecked(i) == *rhs.get_unchecked(j) {
+                *lhs.get_unchecked_mut(k) = *lhs.get_unchecked(i);
+                i += 1;
+                j += 1;
+                k += 1;
+                if i == lhs.len() || j == rhs.len() { break 'outer }
+            }
+        }
+    }
+
+    lhs.truncate(k);
+}
+
+fn and_assign_gallop(lhs: &mut Vec<u16>, rhs: &[u16]) {
+    // Handle degenerate cases
+    if lhs.is_empty() || rhs.is_empty() {
+        lhs.clear();
+        return;
+    }
+
+    let mut min_gallop = MIN_GALLOP;
+
+    let mut i = 0;
+    let mut j = 0;
+    let mut k = 0;
+
+    'outer: loop {
+        let mut count_lt: usize = 0; // Number of times in a row that first run won
+        let mut count_gt: usize = 0; // Number of times in a row that second run won
+        let mut count_eq: usize = 0; // Number of times in a row that both were equal
+
+        loop {
+            let a = unsafe { lhs.get_unchecked(i) };
+            let b = unsafe { rhs.get_unchecked(j) };
+            match a.cmp(b) {
+                Less => {
+                    i += 1;
+                    count_lt += 1;
+                    count_gt = 0;
+                    count_eq = 0;
+                    if i >= lhs.len() { break 'outer; }
+                }
+                Greater => {
+                    j += 1;
+                    count_lt = 0;
+                    count_gt += 1;
+                    count_eq = 0;
+                    if j >= rhs.len() { break 'outer; }
+                }
+                Equal => {
+                    if count_eq < MIN_RUN {
+                        lhs[k] = *a;
+                        i += 1;
+                        j += 1;
+                        k += 1;
+                        count_lt = 0;
+                        count_gt = 0;
+                        count_eq += 1;
+                        if i >= lhs.len() || j >= rhs.len() { break 'outer; }
+                    } else {
+                        let run_offset = 1 + lhs[i+1..].iter().zip(rhs[j+1..].iter())
+                            .take_while(|(a, b)| a == b)
+                            .count();
+                        lhs[k..k+run_offset].copy_from_slice(&rhs[j..j+run_offset]);
+                        i += run_offset;
+                        j += run_offset;
+                        k += run_offset;
+
+                        if i >= lhs.len() || j >= rhs.len() { break 'outer; }
+                        break; // break inner to reset counters
+                    }
+                }
+            }
+            if (count_lt | count_gt) >= min_gallop { break; }
+        } // end walk loop
+
+        loop {
+            match exponential_search(&lhs[i..], &rhs[j]) {
+                Ok(v) => {
+                    lhs[k] = lhs[i+v];
+                    i += v + 1;
+                    j += 1;
+                    k += 1;
+                    count_lt = v + 1;
+                    if i >= lhs.len() || j >= rhs.len() { break 'outer; }
+                }
+                Err(v) => {
+                    i += v;
+                    count_lt = v;
+                    if i >= lhs.len() { break 'outer; }
+                }
+            };
+
+            match exponential_search(&rhs[j..], &lhs[i]) {
+                Ok(v) => {
+                    lhs[k] = rhs[j+v];
+                    i += 1;
+                    j += v + 1;
+                    k += 1;
+                    count_gt = v + 1;
+                    if i >= lhs.len() || j >= rhs.len() { break 'outer; }
+                }
+                Err(v) => {
+                    j += v;
+                    count_gt = v;
+                    if j >= rhs.len() { break 'outer; }
+                }
+            };
+
+            min_gallop = min_gallop.saturating_sub(1);
+            if count_lt < MIN_GALLOP && count_gt < MIN_GALLOP { break; }
+        }
+
+        min_gallop += 2; // Penalize for leaving gallop mode
+    }
+
+    lhs.truncate(k);
+}
+
+// #[inline]
 fn and_assign_array_bitmap(lhs: &mut ArrayStore, rhs: & BitmapStore) {
     lhs.vec.retain(|x| rhs.contains(*x));
 }
@@ -447,9 +721,10 @@ macro_rules! dev_println {
     ($($arg:tt)*) => (if cfg!(all(debug_assertions, not(test))) { println!($($arg)*); })
 }
 
+const MIN_RUN: usize = 3;
 const MIN_GALLOP: usize = 7;
 
-#[inline(never)]
+// #[inline]
 pub fn union_gallop(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
     let mut vec = {
         let capacity = (lhs.len() + rhs.len()).min(4096);
@@ -579,38 +854,545 @@ pub fn union_gallop(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
     vec
 }
 
-#[inline]
-fn exponential_search<T>(slice: &[T], elem: &T) -> Result<usize, usize>
-    where T: Ord
-{
-    exponential_search_by(slice, |x| x.cmp(elem))
-}
+// #[inline]
+pub fn union_gallop_opt(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
+    let mut vec = {
+        let capacity = (lhs.len() + rhs.len()).min(4096);
+        Vec::with_capacity(capacity)
+    };
 
-#[inline]
-fn exponential_search_by<T, F>(slice: &[T], mut f: F) -> Result<usize, usize>
-    where F: FnMut(&T) -> Ordering,
-{
-    let mut index = 1;
-    while index < slice.len() && f(&slice[index]) == Ordering::Less {
-        index *= 2;
+    // Handle degenerate cases
+    if lhs.is_empty() || rhs.is_empty() {
+        vec.extend_from_slice(&lhs);
+        vec.extend_from_slice(&rhs);
+        return vec;
     }
 
-    let half_bound = index / 2;
-    let bound = std::cmp::min(index + 1, slice.len());
+    let mut min_gallop = MIN_GALLOP;
 
-    match slice[half_bound..bound].binary_search_by(f) {
-        Ok(pos) => Ok(half_bound + pos),
-        Err(pos) => Err(half_bound + pos),
+    'outer: loop {
+        let mut count_lt: usize = 0; // Number of times in a row that first run won
+        let mut count_gt: usize = 0; // Number of times in a row that second run won
+        let mut count_eq: usize = 0; // Number of times in a row that both were equal
+
+
+        // Do the straightforward thing until (if ever) one run starts
+        // winning consistently.
+        loop {
+            let a = unsafe { lhs.get_unchecked(0) };
+            let b = unsafe { rhs.get_unchecked(0) };
+
+            // The reason why we use if/else control flow rather than match
+            // is because match reorders comparison operations, which is perf sensitive.
+            let cmp = a.cmp(b);
+            if cmp == Less {
+                vec.push(*a);
+                lhs = &lhs[1..];
+                count_lt += 1;
+                count_gt = 0;
+                count_eq = 0;
+                if lhs.is_empty() { break 'outer; }
+            } else if cmp == Greater {
+                vec.push(*b);
+                rhs = &rhs[1..];
+                count_lt = 0;
+                count_gt += 1;
+                count_eq = 0;
+                if rhs.is_empty() { break 'outer; }
+            } else {
+                if count_eq < MIN_RUN {
+                    vec.push(*a);
+                    lhs = &lhs[1..];
+                    rhs = &rhs[1..];
+                    count_lt = 0;
+                    count_gt = 0;
+                    count_eq += 1;
+                    if lhs.is_empty() || rhs.is_empty() { break 'outer; }
+                } else {
+                    let run_offset = 1 + lhs[1..].iter().zip(rhs[1..].iter())
+                        .take_while(|(a, b)| a == b)
+                        .count();
+                    vec.extend_from_slice(&lhs[..run_offset]);
+                    lhs = &lhs[run_offset..];
+                    rhs = &rhs[run_offset..];
+                    if lhs.is_empty() || rhs.is_empty() { break 'outer; }
+                    break; // break inner to reset counters
+                }
+            }
+
+            if (count_lt | count_gt) >= min_gallop { break; }
+        }
+
+
+        // One run is winning so consistently that galloping may be a
+        // huge win. So try that, and continue galloping until (if ever)
+        // neither run appears to be winning consistently anymore.
+        loop {
+            match exponential_search(&lhs, unsafe { rhs.get_unchecked(0) }) {
+                Ok(i) => {
+                    vec.extend_from_slice(&lhs[..i + 1]);
+                    lhs = &lhs[i + 1..];
+                    rhs = &rhs[1..];
+                    count_lt = i + 1;
+                    if lhs.is_empty() || rhs.is_empty() { break 'outer; }
+                }
+                Err(i) => {
+                    vec.extend_from_slice(&lhs[..i]);
+                    lhs = &lhs[i..];
+                    count_lt = i;
+                    if lhs.is_empty() { break 'outer; }
+                }
+            };
+
+            match exponential_search(&rhs, unsafe { lhs.get_unchecked(0) }) {
+                Ok(i) => {
+                    vec.extend_from_slice(&rhs[..i + 1]);
+                    rhs = &rhs[i + 1..];
+                    lhs = &lhs[1..];
+                    count_gt = i + 1;
+                    if lhs.is_empty() || rhs.is_empty() { break 'outer; }
+                }
+                Err(i) => {
+                    vec.extend_from_slice(&rhs[..i]);
+                    rhs = &rhs[i..];
+                    count_gt = i;
+                    if rhs.is_empty() { break 'outer; }
+                }
+            };
+
+            min_gallop = min_gallop.saturating_sub(1);
+            if count_lt < MIN_GALLOP && count_gt < MIN_GALLOP { break; }
+        }
+
+        min_gallop += 2; // Penalize for leaving gallop mode
+    }
+    // end of 'outer loop
+
+
+
+    // Store remaining elements of the arrays
+    vec.extend_from_slice(&lhs);
+    vec.extend_from_slice(&rhs);
+
+    vec
+}
+
+
+
+
+/**
+ * Branchless binary search going after 4 values at once.
+ * Assumes that array is sorted.
+ * You have that array[*index1] >= target1, array[*index12] >= target2, ...
+ * except when *index1 = n, in which case you know that all values in array are
+ * smaller than target1, and so forth.
+ * It has logarithmic complexity.
+ */
+//#[inline(never)]
+// #[inline]
+fn binarySearch4(
+    array: &[u16],
+    target1: u16,
+    target2: u16,
+    target3: u16,
+    target4: u16,
+    index1: &mut usize,
+    index2: &mut usize,
+    index3: &mut usize,
+    index4: &mut usize,
+) {
+    let mut base1 = array;
+    let mut base2 = array;
+    let mut base3 = array;
+    let mut base4 = array;
+    let mut n = array.len();
+
+    if n == 0 { return; }
+    while n > 1 {
+        let half = n / 2;
+        base1 = if unsafe { *base1.get_unchecked(half) } < target1 { &base1[half..] } else { base1 };
+        base2 = if unsafe { *base2.get_unchecked(half) } < target2 { &base2[half..] } else { base2 };
+        base3 = if unsafe { *base3.get_unchecked(half) } < target3 { &base3[half..] } else { base3 };
+        base4 = if unsafe { *base4.get_unchecked(half) } < target4 { &base4[half..] } else { base4 };
+        n -= half;
+    }
+    *index1 = (unsafe { *base1.get_unchecked(0) } < target1) as usize + array.len() - base1.len();
+    *index2 = (unsafe { *base2.get_unchecked(0) } < target2) as usize + array.len() - base2.len();
+    *index3 = (unsafe { *base3.get_unchecked(0) } < target3) as usize + array.len() - base3.len();
+    *index4 = (unsafe { *base4.get_unchecked(0) } < target4) as usize + array.len() - base4.len();
+}
+
+
+/**
+ * Branchless binary search going after 2 values at once.
+ * Assumes that array is sorted.
+ * You have that array[*index1] >= target1, array[*index12] >= target2.
+ * except when *index1 = n, in which case you know that all values in array are
+ * smaller than target1, and so forth.
+ * It has logarithmic complexity.
+ */
+//#[inline(never)]
+// #[inline]
+fn binarySearch2(
+    array: &[u16],
+    target1: u16,
+    target2: u16,
+    index1: &mut usize,
+    index2: &mut usize,
+) {
+    let mut base1 = array;
+    let mut base2 = array;
+    let mut n = array.len();
+    if n == 0 { return; }
+
+    while n > 1 {
+        let half = n / 2;
+        base1 = if unsafe { *base1.get_unchecked(half) } < target1 { &base1[half..] } else { base1 };
+        base2 = if unsafe { *base2.get_unchecked(half) } < target2 { &base2[half..] } else { base2 };
+        n -= half;
+    }
+
+    *index1 = (unsafe { *base1.get_unchecked(0) } < target1) as usize + array.len() - base1.len();
+    *index2 = (unsafe { *base2.get_unchecked(0) } < target2) as usize + array.len() - base2.len();
+}
+
+//#[inline(never)]
+// #[inline]
+fn intersect_skewed_small(small: &mut Vec<u16>, large: &[u16]) {
+    debug_assert!(small.len() < large.len());
+    let size_s = small.len();
+    let size_l = large.len();
+
+    let mut pos = 0;
+    let mut idx_l = 0;
+    let mut idx_s = 0;
+
+    if 0 == size_s {
+        small.clear();
+        return;
+    }
+
+    let mut index1 = 0;
+    let mut index2 = 0;
+    let mut index3 = 0;
+    let mut index4 = 0;
+    while (idx_s + 4 <= size_s) && (idx_l < size_l) {
+        let target1 = small[idx_s];
+        let target2 = small[idx_s + 1];
+        let target3 = small[idx_s + 2];
+        let target4 = small[idx_s + 3];
+        binarySearch4(&large[idx_l..], target1, target2, target3, target4,
+                      &mut index1, &mut index2, &mut index3, &mut index4);
+        if (index1 + idx_l < size_l) && (large[idx_l + index1] == target1) {
+            small[pos] = target1;
+            pos += 1;
+        }
+        if (index2 + idx_l < size_l) && (large[idx_l + index2] == target2) {
+            small[pos] = target2;
+            pos += 1;
+        }
+        if (index3 + idx_l < size_l) && (large[idx_l + index3] == target3) {
+            small[pos] = target3;
+            pos += 1;
+        }
+        if (index4 + idx_l < size_l) && (large[idx_l + index4] == target4) {
+            small[pos] = target4;
+            pos += 1;
+        }
+        idx_s += 4;
+        idx_l += index4;
+    }
+    if (idx_s + 2 <= size_s) && (idx_l < size_l) {
+        let target1 = small[idx_s];
+        let target2 = small[idx_s + 1];
+        binarySearch2(&large[idx_l..], target1, target2, &mut index1, &mut index2);
+        if (index1 + idx_l < size_l) && (large[idx_l + index1] == target1) {
+            small[pos] = target1;
+            pos += 1;
+        }
+        if (index2 + idx_l < size_l) && (large[idx_l + index2] == target2) {
+            small[pos] = target2;
+            pos += 1;
+        }
+        idx_s += 2;
+        idx_l += index2;
+    }
+    if (idx_s < size_s) && (idx_l < size_l) {
+        let val_s = small[idx_s];
+        match large[idx_l..].binary_search(&val_s) {
+            Ok(_) => {
+                small[pos] = val_s;
+                pos += 1;
+            }
+            _ => ()
+        }
+    }
+    small.truncate(pos)
+}
+
+//#[inline(never)]
+// #[inline]
+fn intersect_skewed_small_unchecked(small: &mut Vec<u16>, large: &[u16]) {
+    debug_assert!(small.len() < large.len());
+    let size_s = small.len();
+    let size_l = large.len();
+
+    let mut pos = 0;
+    let mut idx_l = 0;
+    let mut idx_s = 0;
+
+    if 0 == size_s {
+        small.clear();
+        return;
+    }
+
+    let mut index1 = 0;
+    let mut index2 = 0;
+    let mut index3 = 0;
+    let mut index4 = 0;
+    unsafe {
+        while (idx_s + 4 <= size_s) && (idx_l < size_l) {
+            let target1 = *small.get_unchecked(idx_s);
+            let target2 = *small.get_unchecked(idx_s + 1);
+            let target3 = *small.get_unchecked(idx_s + 2);
+            let target4 = *small.get_unchecked(idx_s + 3);
+            binarySearch4(&large[idx_l..], target1, target2, target3, target4,
+                          &mut index1, &mut index2, &mut index3, &mut index4);
+            if (index1 + idx_l < size_l) && (*large.get_unchecked(idx_l + index1) == target1) {
+                *small.get_unchecked_mut(pos) = target1;
+                pos += 1;
+            }
+            if (index2 + idx_l < size_l) && (*large.get_unchecked(idx_l + index2) == target2) {
+                *small.get_unchecked_mut(pos) = target2;
+                pos += 1;
+            }
+            if (index3 + idx_l < size_l) && (*large.get_unchecked(idx_l + index3) == target3) {
+                *small.get_unchecked_mut(pos) = target3;
+                pos += 1;
+            }
+            if (index4 + idx_l < size_l) && (*large.get_unchecked(idx_l + index4) == target4) {
+                *small.get_unchecked_mut(pos) = target4;
+                pos += 1;
+            }
+            idx_s += 4;
+            idx_l += index4;
+        }
+        if (idx_s + 2 <= size_s) && (idx_l < size_l) {
+            let target1 = *small.get_unchecked(idx_s);
+            let target2 = *small.get_unchecked(idx_s + 1);
+            binarySearch2(&large[idx_l..], target1, target2, &mut index1, &mut index2);
+            if (index1 + idx_l < size_l) && (*large.get_unchecked(idx_l + index1) == target1) {
+                *small.get_unchecked_mut(pos) = target1;
+                pos += 1;
+            }
+            if (index2 + idx_l < size_l) && (*large.get_unchecked(idx_l + index2) == target2) {
+                *small.get_unchecked_mut(pos) = target2;
+                pos += 1;
+            }
+            idx_s += 2;
+            idx_l += index2;
+        }
+        if (idx_s < size_s) && (idx_l < size_l) {
+            let val_s = small.get_unchecked(idx_s);
+            match large[idx_l..].binary_search(val_s) {
+                Ok(_) => {
+                    *small.get_unchecked_mut(pos) = *val_s;
+                    pos += 1;
+                }
+                _ => ()
+            }
+        }
+    }
+    small.truncate(pos)
+}
+
+//#[inline(never)]
+// #[inline]
+fn intersect_skewed_large(small: &[u16], large: &mut Vec<u16>) {
+    debug_assert!(small.len() < large.len());
+    let size_s = small.len();
+    let size_l = large.len();
+
+    let mut pos = 0;
+    let mut idx_l = 0;
+    let mut idx_s = 0;
+
+    if 0 == size_s {
+        large.clear();
+        return;
+    }
+
+    let mut index1 = 0;
+    let mut index2 = 0;
+    let mut index3 = 0;
+    let mut index4 = 0;
+    while (idx_s + 4 <= size_s) && (idx_l < size_l) {
+        let target1 = small[idx_s];
+        let target2 = small[idx_s + 1];
+        let target3 = small[idx_s + 2];
+        let target4 = small[idx_s + 3];
+        binarySearch4(&large[idx_l..], target1, target2, target3, target4,
+                      &mut index1, &mut index2, &mut index3, &mut index4);
+        if (index1 + idx_l < size_l) && (large[idx_l + index1] == target1) {
+            large[pos] = target1;
+            pos += 1;
+        }
+        if (index2 + idx_l < size_l) && (large[idx_l + index2] == target2) {
+            large[pos] = target2;
+            pos += 1;
+        }
+        if (index3 + idx_l < size_l) && (large[idx_l + index3] == target3) {
+            large[pos] = target3;
+            pos += 1;
+        }
+        if (index4 + idx_l < size_l) && (large[idx_l + index4] == target4) {
+            large[pos] = target4;
+            pos += 1;
+        }
+        idx_s += 4;
+        idx_l += index4;
+    }
+    if (idx_s + 2 <= size_s) && (idx_l < size_l) {
+        let target1 = small[idx_s];
+        let target2 = small[idx_s + 1];
+        binarySearch2(&large[idx_l..], target1, target2, &mut index1, &mut index2);
+        if (index1 + idx_l < size_l) && (large[idx_l + index1] == target1) {
+            large[pos] = target1;
+            pos += 1;
+        }
+        if (index2 + idx_l < size_l) && (large[idx_l + index2] == target2) {
+            large[pos] = target2;
+            pos += 1;
+        }
+        idx_s += 2;
+        idx_l += index2;
+    }
+    if (idx_s < size_s) && (idx_l < size_l) {
+        let val_s = small[idx_s];
+        match large[idx_l..].binary_search(&val_s) {
+            Ok(_) => {
+                large[pos] = val_s;
+                pos += 1;
+            }
+            _ => ()
+        }
+    }
+    large.truncate(pos)
+}
+
+// #[inline(never)]
+// #[inline]
+fn intersect_skewed_large_unchecked(small: &[u16], large: &mut Vec<u16>) {
+    debug_assert!(small.len() < large.len());
+    let size_s = small.len();
+    let size_l = large.len();
+
+    let mut pos = 0;
+    let mut idx_l = 0;
+    let mut idx_s = 0;
+
+    if 0 == size_s {
+        large.clear();
+        return;
+    }
+
+    let mut index1 = 0;
+    let mut index2 = 0;
+    let mut index3 = 0;
+    let mut index4 = 0;
+    unsafe {
+        while (idx_s + 4 <= size_s) && (idx_l < size_l) {
+            let target1 = *small.get_unchecked(idx_s);
+            let target2 = *small.get_unchecked(idx_s + 1);
+            let target3 = *small.get_unchecked(idx_s + 2);
+            let target4 = *small.get_unchecked(idx_s + 3);
+            binarySearch4(&large[idx_l..], target1, target2, target3, target4,
+                          &mut index1, &mut index2, &mut index3, &mut index4);
+            if (index1 + idx_l < size_l) && (*large.get_unchecked(idx_l + index1) == target1) {
+                *large.get_unchecked_mut(pos) = target1;
+                pos += 1;
+            }
+            if (index2 + idx_l < size_l) && (*large.get_unchecked(idx_l + index2) == target2) {
+                *large.get_unchecked_mut(pos) = target2;
+                pos += 1;
+            }
+            if (index3 + idx_l < size_l) && (*large.get_unchecked(idx_l + index3) == target3) {
+                *large.get_unchecked_mut(pos) = target3;
+                pos += 1;
+            }
+            if (index4 + idx_l < size_l) && (*large.get_unchecked(idx_l + index4) == target4) {
+                *large.get_unchecked_mut(pos) = target4;
+                pos += 1;
+            }
+            idx_s += 4;
+            idx_l += index4;
+        }
+        if (idx_s + 2 <= size_s) && (idx_l < size_l) {
+            let target1 = *small.get_unchecked(idx_s);
+            let target2 = *small.get_unchecked(idx_s + 1);
+            binarySearch2(&large[idx_l..], target1, target2, &mut index1, &mut index2);
+            if (index1 + idx_l < size_l) && (*large.get_unchecked(idx_l + index1) == target1) {
+                *large.get_unchecked_mut(pos) = target1;
+                pos += 1;
+            }
+            if (index2 + idx_l < size_l) && (*large.get_unchecked(idx_l + index2) == target2) {
+                *large.get_unchecked_mut(pos) = target2;
+                pos += 1;
+            }
+            idx_s += 2;
+            idx_l += index2;
+        }
+        if (idx_s < size_s) && (idx_l < size_l) {
+            let val_s = small.get_unchecked(idx_s);
+            match large[idx_l..].binary_search(val_s) {
+                Ok(_) => {
+                    *large.get_unchecked_mut(pos) = *val_s;
+                    pos += 1;
+                }
+                _ => ()
+            }
+        }
+    }
+    large.truncate(pos)
+}
+
+//#[inline(never)]
+// #[inline]
+fn and_assign_opt(lhs: &mut Vec<u16>, rhs: &[u16]) {
+    // const THRESHOLD: usize = 64;
+    // if lhs.len() * THRESHOLD < rhs.len() {
+    //     intersect_skewed_small(lhs, rhs);
+    // } else if rhs.len() * THRESHOLD < lhs.len() {
+    //     intersect_skewed_large(rhs, lhs);
+    // } else {
+    //     and_assign_run(lhs, rhs);
+    // }
+
+    unsafe {
+        const THRESHOLD: usize = 64;
+        if lhs.len() * THRESHOLD < rhs.len() {
+            intersect_skewed_small_unchecked(lhs, rhs);
+        } else if rhs.len() * THRESHOLD < lhs.len() {
+            intersect_skewed_large_unchecked(rhs, lhs);
+        } else {
+            and_assign_run_unchecked(lhs, rhs);
+        }
     }
 }
 
+//#[inline(never)]
 #[inline]
-fn exponential_search_by_key<T, B, F>(slice: &[T], b: &B, mut f: F) -> Result<usize, usize>
-    where F: FnMut(&T) -> B,
-          B: Ord
-{
-    exponential_search_by(slice, |k| f(k).cmp(b))
+fn and_assign_opt_unchecked(lhs: &mut Vec<u16>, rhs: &[u16]) {
+    const THRESHOLD: usize = 64;
+    if lhs.len() * THRESHOLD < rhs.len() {
+        intersect_skewed_small_unchecked(lhs, rhs);
+    } else if rhs.len() * THRESHOLD < lhs.len() {
+        intersect_skewed_large_unchecked(rhs, lhs);
+    } else {
+        and_assign_run_unchecked(lhs, rhs);
+    }
 }
+
 
 #[cfg(test)]
 mod tests {

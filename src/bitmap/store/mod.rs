@@ -1,11 +1,13 @@
 mod array_store;
 mod bitmap_store;
+mod op_vector;
 
 use std::mem;
 use std::ops::{
     BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, RangeInclusive, Sub, SubAssign,
 };
 use std::{slice, vec};
+use crate::bitmap::store::array_store::{and_assign_array_walk, and_assign_array_gallop, and_assign_array_opt, and_assign_array_opt_unsafe, and_assign_run_unchecked, and_assign_run, and_assign_array_run, and_assign_array_vector};
 
 use self::bitmap_store::BITMAP_LENGTH;
 use self::Store::{Array, Bitmap};
@@ -149,7 +151,7 @@ impl Store {
     pub fn union_gallop(&mut self, rhs: &Store) {
         match (self, &rhs) {
             (&mut Array(ref mut vec1), &Array(ref vec2)) => {
-                *vec1 = ArrayStore::from_vec_unchecked(array_store::union_gallop(
+                *vec1 = ArrayStore::from_vec_unchecked(array_store::union_gallop_opt(
                     vec1.as_slice(),
                     vec2.as_slice(),
                 ));
@@ -164,6 +166,180 @@ impl Store {
                 let mut lhs: Store = Bitmap(bits2.clone());
                 BitOrAssign::bitor_assign(&mut lhs, &*this);
                 *this = lhs;
+            }
+        }
+    }
+
+    pub fn union_vector(&mut self, rhs: &Store) {
+        match (self, &rhs) {
+            (&mut Array(ref mut vec1), &Array(ref vec2)) => {
+                *vec1 = ArrayStore::from_vec_unchecked(op_vector ::union_vector(
+                    vec1.as_slice(),
+                    vec2.as_slice(),
+                ));
+            }
+            (&mut Bitmap(ref mut bits1), &Array(ref vec2)) => {
+                BitOrAssign::bitor_assign(bits1, vec2);
+            }
+            (&mut Bitmap(ref mut bits1), &Bitmap(ref bits2)) => {
+                BitOrAssign::bitor_assign(bits1, bits2);
+            }
+            (this @ &mut Array(..), &Bitmap(ref bits2)) => {
+                let mut lhs: Store = Bitmap(bits2.clone());
+                BitOrAssign::bitor_assign(&mut lhs, &*this);
+                *this = lhs;
+            }
+        }
+    }
+
+    pub fn and_vector(&self, rhs: &Store) -> Store {
+        match (self, rhs) {
+            (&Array(ref vec1), &Array(ref vec2)) => Array(ArrayStore::from_vec_unchecked(
+                op_vector::intersect_vector(vec1.as_slice(), vec2.as_slice())
+            )),
+            (&Bitmap(..), &Array(..)) => {
+                let mut rhs = rhs.clone();
+                BitAndAssign::bitand_assign(&mut rhs, self);
+                rhs
+            }
+            _ => {
+                let mut lhs = self.clone();
+                BitAndAssign::bitand_assign(&mut lhs, rhs);
+                lhs
+            }
+        }
+    }
+
+    pub fn and_opt_unsafe(&self, rhs: &Store) -> Store {
+        match (self, rhs) {
+            (&Array(ref vec1), &Array(ref vec2)) => {
+                let mut lhs = vec1.clone();
+                and_assign_array_opt_unsafe(&mut lhs, vec2);
+                Array(lhs)
+            },
+            (&Bitmap(..), &Array(..)) => {
+                let mut rhs = rhs.clone();
+                BitAndAssign::bitand_assign(&mut rhs, self);
+                rhs
+            }
+            _ => {
+                let mut lhs = self.clone();
+                BitAndAssign::bitand_assign(&mut lhs, rhs);
+                lhs
+            }
+        }
+    }
+
+    pub fn and_assign_walk(&mut self, rhs: &Store) {
+        match (self, rhs) {
+            (&mut Array(ref mut vec1), &Array(ref vec2)) => {
+                and_assign_array_walk(vec1, vec2);
+            }
+            (&mut Bitmap(ref mut bits1), &Bitmap(ref bits2)) => {
+                BitAndAssign::bitand_assign(bits1, bits2);
+            }
+            (&mut Array(ref mut vec1), &Bitmap(ref bits2)) => {
+                BitAndAssign::bitand_assign(vec1, bits2);
+            }
+            (this @ &mut Bitmap(..), &Array(..)) => {
+                let mut new = rhs.clone();
+                BitAndAssign::bitand_assign(&mut new, &*this);
+                *this = new;
+            }
+        }
+    }
+
+    pub fn and_assign_run(&mut self, rhs: &Store) {
+        match (self, rhs) {
+            (&mut Array(ref mut vec1), &Array(ref vec2)) => {
+                and_assign_array_run(vec1, vec2);
+            }
+            (&mut Bitmap(ref mut bits1), &Bitmap(ref bits2)) => {
+                BitAndAssign::bitand_assign(bits1, bits2);
+            }
+            (&mut Array(ref mut vec1), &Bitmap(ref bits2)) => {
+                BitAndAssign::bitand_assign(vec1, bits2);
+            }
+            (this @ &mut Bitmap(..), &Array(..)) => {
+                let mut new = rhs.clone();
+                BitAndAssign::bitand_assign(&mut new, &*this);
+                *this = new;
+            }
+        }
+    }
+
+    pub fn and_assign_gallop(&mut self, rhs: &Store) {
+        match (self, rhs) {
+            (&mut Array(ref mut vec1), &Array(ref vec2)) => {
+                and_assign_array_gallop(vec1, vec2);
+            }
+            (&mut Bitmap(ref mut bits1), &Bitmap(ref bits2)) => {
+                BitAndAssign::bitand_assign(bits1, bits2);
+            }
+            (&mut Array(ref mut vec1), &Bitmap(ref bits2)) => {
+                BitAndAssign::bitand_assign(vec1, bits2);
+            }
+            (this @ &mut Bitmap(..), &Array(..)) => {
+                let mut new = rhs.clone();
+                BitAndAssign::bitand_assign(&mut new, &*this);
+                *this = new;
+            }
+        }
+    }
+
+    pub fn and_assign_opt(&mut self, rhs: &Store) {
+        match (self, rhs) {
+            (&mut Array(ref mut vec1), &Array(ref vec2)) => {
+                and_assign_array_opt(vec1, vec2);
+            }
+            (&mut Bitmap(ref mut bits1), &Bitmap(ref bits2)) => {
+                BitAndAssign::bitand_assign(bits1, bits2);
+            }
+            (&mut Array(ref mut vec1), &Bitmap(ref bits2)) => {
+                BitAndAssign::bitand_assign(vec1, bits2);
+            }
+            (this @ &mut Bitmap(..), &Array(..)) => {
+                let mut new = rhs.clone();
+                BitAndAssign::bitand_assign(&mut new, &*this);
+                *this = new;
+            }
+        }
+    }
+
+    pub fn and_assign_opt_unsafe(&mut self, rhs: &Store) {
+        match (self, rhs) {
+            (&mut Array(ref mut vec1), &Array(ref vec2)) => {
+                and_assign_array_opt_unsafe(vec1, vec2);
+            }
+            (&mut Bitmap(ref mut bits1), &Bitmap(ref bits2)) => {
+                BitAndAssign::bitand_assign(bits1, bits2);
+            }
+            (&mut Array(ref mut vec1), &Bitmap(ref bits2)) => {
+                BitAndAssign::bitand_assign(vec1, bits2);
+            }
+            (this @ &mut Bitmap(..), &Array(..)) => {
+                let mut new = rhs.clone();
+                BitAndAssign::bitand_assign(&mut new, &*this);
+                *this = new;
+            }
+        }
+    }
+
+    pub fn and_assign_vector(&mut self, rhs: &Store) {
+        match (self, rhs) {
+            (&mut Array(ref mut vec1), &Array(ref vec2)) => {
+                and_assign_array_vector(vec1, vec2);
+            }
+            (&mut Bitmap(ref mut bits1), &Bitmap(ref bits2)) => {
+                BitAndAssign::bitand_assign(bits1, bits2);
+            }
+            (&mut Array(ref mut vec1), &Bitmap(ref bits2)) => {
+                BitAndAssign::bitand_assign(vec1, bits2);
+            }
+            (this @ &mut Bitmap(..), &Array(..)) => {
+                let mut new = rhs.clone();
+                BitAndAssign::bitand_assign(&mut new, &*this);
+                *this = new;
             }
         }
     }
