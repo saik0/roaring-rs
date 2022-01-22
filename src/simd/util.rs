@@ -2,8 +2,7 @@
 //!
 //! functions that are generally useful, but not part of std
 
-use std::mem;
-use std::simd::{mask16x8, u16x8, LaneCount, Simd, SimdElement, SupportedLaneCount};
+use std::simd::{LaneCount, Simd, SimdElement, SupportedLaneCount};
 
 /// compute the min for each lane in `a` and `b`
 #[inline]

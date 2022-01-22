@@ -4,7 +4,7 @@ use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, S
 use retain_mut::RetainMut;
 
 use crate::bitmap::container::Container;
-use crate::bitmap::store::BitmapStore;
+
 use crate::bitmap::Pairs;
 use crate::RoaringBitmap;
 

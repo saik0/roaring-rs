@@ -4,7 +4,7 @@
 //! so they remain unimplemented by std::simd
 
 use std::mem;
-use std::simd::{i8x16, mask16x8, u16x8, u8x16, Simd};
+use std::simd::{mask16x8, u16x8, u8x16, Simd};
 
 #[allow(unreachable_code)]
 #[inline]

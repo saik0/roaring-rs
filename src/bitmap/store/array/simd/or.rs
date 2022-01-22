@@ -24,7 +24,7 @@ fn store_unique(old: u16x8, newval: u16x8, output: &mut [u16]) -> usize {
     unsafe {
         store_unchecked(val, output);
     }
-    return count;
+    count
 }
 
 /// Assuming that a and b are sorted, returns a tuple of sorted output.
@@ -57,7 +57,7 @@ fn dedup(slice: &mut [u16]) -> usize {
             pos += 1;
         }
     }
-    return pos;
+    pos
 }
 
 // a one-pass SSE union algorithm

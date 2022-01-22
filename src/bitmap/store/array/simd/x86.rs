@@ -166,7 +166,7 @@ unsafe fn intersect_vector16_x86(
             i_b += 1;
         }
     }
-    return count as usize;
+    count as usize
 }
 
 // can one vectorize the computation of the union? (Update: Yes! See
@@ -238,7 +238,7 @@ unsafe fn union_uint16_x86(
         pos += n_elems;
     }
 
-    return pos;
+    pos
 }
 
 /***
@@ -259,8 +259,7 @@ unsafe fn sse_merge_x86(
     vecMin: *mut __m128i,
     vecMax: *mut __m128i, // output
 ) {
-    let mut vecTmp: __m128i;
-    vecTmp = _mm_min_epu16(*vInput1, *vInput2);
+    let mut vecTmp: __m128i = _mm_min_epu16(*vInput1, *vInput2);
     *vecMax = _mm_max_epu16(*vInput1, *vInput2);
     vecTmp = _mm_alignr_epi8::<2>(vecTmp, vecTmp);
     *vecMin = _mm_min_epu16(vecTmp, *vecMax);
@@ -299,7 +298,7 @@ unsafe fn store_unique_x86(old: __m128i, newval: __m128i, output: *mut u16) -> u
     let key: __m128i = _mm_lddqu_si128(uniqshuf.as_ptr().cast::<__m128i>().offset(M as isize));
     let val: __m128i = _mm_shuffle_epi8(newval, key);
     _mm_storeu_si128(output as *mut __m128i, val);
-    return numberofnewvalues;
+    numberofnewvalues
 }
 
 // working in-place, this function overwrites the repeated values
@@ -314,7 +313,7 @@ unsafe fn unique_x86(out: *mut u16, len: usize) -> usize {
             pos += 1;
         }
     }
-    return pos;
+    pos
 }
 
 // a one-pass SSE union algorithm
@@ -331,12 +330,10 @@ unsafe fn union_vector16_x86(
         return union_uint16_x86(array1, length1, array2, length2, output);
     }
 
-    let vA: __m128i;
-    let vB: __m128i;
     let mut V: __m128i;
     let mut vecMin: __m128i = _mm_setzero_si128();
     let mut vecMax: __m128i = _mm_setzero_si128();
-    let mut laststore: __m128i;
+
     let initoutput: *mut u16 = output;
     let len1: usize = length1 / 8;
     let len2: usize = length2 / 8;
@@ -344,20 +341,18 @@ unsafe fn union_vector16_x86(
     let mut pos2: usize = 0;
 
     // we start the machine
-    vA = _mm_lddqu_si128(array1.cast());
+    let vA: __m128i = _mm_lddqu_si128(array1.cast());
     pos1 += 1;
-    vB = _mm_lddqu_si128(array2.cast());
+    let vB: __m128i = _mm_lddqu_si128(array2.cast());
     pos2 += 1;
 
     sse_merge_x86(&vA, &vB, &mut vecMin, &mut vecMax);
-    laststore = _mm_set1_epi16(-1);
+    let mut laststore: __m128i = _mm_set1_epi16(-1);
     output = output.add(store_unique_x86(laststore, vecMin, output));
     laststore = vecMin;
     if (pos1 < len1) && (pos2 < len2) {
-        let mut curA: u16;
-        let mut curB: u16;
-        curA = *array1.add(8 * pos1);
-        curB = *array2.add(8 * pos2);
+        let mut curA: u16 = *array1.add(8 * pos1);
+        let mut curB: u16 = *array2.add(8 * pos2);
         loop {
             if curA <= curB {
                 V = _mm_lddqu_si128((array1).cast::<__m128i>().add(pos1));
@@ -424,5 +419,5 @@ unsafe fn union_vector16_x86(
             output,
         );
     }
-    return len;
+    len
 }

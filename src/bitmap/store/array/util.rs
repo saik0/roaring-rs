@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::cmp::Ordering::{Greater, Less};
+use std::cmp::Ordering::{Equal, Greater, Less};
 
 const MIN_RUN: usize = 3;
 const MIN_GALLOP: usize = 7;
@@ -197,7 +197,7 @@ pub fn and_assign_run_unchecked(lhs: &mut Vec<u16>, rhs: &[u16]) {
  */
 //#[inline(never)]
 // #[inline]
-fn binarySearch4(
+fn binary_search_4(
     array: &[u16],
     target1: u16,
     target2: u16,
@@ -245,7 +245,7 @@ fn binarySearch4(
  */
 //#[inline(never)]
 // #[inline]
-fn binarySearch2(
+fn binary_search_2(
     array: &[u16],
     target1: u16,
     target2: u16,
@@ -297,7 +297,7 @@ pub fn intersect_skewed_small(small: &mut Vec<u16>, large: &[u16]) {
         let target2 = small[idx_s + 1];
         let target3 = small[idx_s + 2];
         let target4 = small[idx_s + 3];
-        binarySearch4(
+        binary_search_4(
             &large[idx_l..],
             target1,
             target2,
@@ -330,7 +330,7 @@ pub fn intersect_skewed_small(small: &mut Vec<u16>, large: &[u16]) {
     if (idx_s + 2 <= size_s) && (idx_l < size_l) {
         let target1 = small[idx_s];
         let target2 = small[idx_s + 1];
-        binarySearch2(&large[idx_l..], target1, target2, &mut index1, &mut index2);
+        binary_search_2(&large[idx_l..], target1, target2, &mut index1, &mut index2);
         if (index1 + idx_l < size_l) && (large[idx_l + index1] == target1) {
             small[pos] = target1;
             pos += 1;
@@ -381,7 +381,7 @@ pub fn intersect_skewed_small_unchecked(small: &mut Vec<u16>, large: &[u16]) {
             let target2 = *small.get_unchecked(idx_s + 1);
             let target3 = *small.get_unchecked(idx_s + 2);
             let target4 = *small.get_unchecked(idx_s + 3);
-            binarySearch4(
+            binary_search_4(
                 &large[idx_l..],
                 target1,
                 target2,
@@ -414,7 +414,7 @@ pub fn intersect_skewed_small_unchecked(small: &mut Vec<u16>, large: &[u16]) {
         if (idx_s + 2 <= size_s) && (idx_l < size_l) {
             let target1 = *small.get_unchecked(idx_s);
             let target2 = *small.get_unchecked(idx_s + 1);
-            binarySearch2(&large[idx_l..], target1, target2, &mut index1, &mut index2);
+            binary_search_2(&large[idx_l..], target1, target2, &mut index1, &mut index2);
             if (index1 + idx_l < size_l) && (*large.get_unchecked(idx_l + index1) == target1) {
                 *small.get_unchecked_mut(pos) = target1;
                 pos += 1;
@@ -465,7 +465,7 @@ pub fn intersect_skewed_large(small: &[u16], large: &mut Vec<u16>) {
         let target2 = small[idx_s + 1];
         let target3 = small[idx_s + 2];
         let target4 = small[idx_s + 3];
-        binarySearch4(
+        binary_search_4(
             &large[idx_l..],
             target1,
             target2,
@@ -498,7 +498,7 @@ pub fn intersect_skewed_large(small: &[u16], large: &mut Vec<u16>) {
     if (idx_s + 2 <= size_s) && (idx_l < size_l) {
         let target1 = small[idx_s];
         let target2 = small[idx_s + 1];
-        binarySearch2(&large[idx_l..], target1, target2, &mut index1, &mut index2);
+        binary_search_2(&large[idx_l..], target1, target2, &mut index1, &mut index2);
         if (index1 + idx_l < size_l) && (large[idx_l + index1] == target1) {
             large[pos] = target1;
             pos += 1;
@@ -549,7 +549,7 @@ pub fn intersect_skewed_large_unchecked(small: &[u16], large: &mut Vec<u16>) {
             let target2 = *small.get_unchecked(idx_s + 1);
             let target3 = *small.get_unchecked(idx_s + 2);
             let target4 = *small.get_unchecked(idx_s + 3);
-            binarySearch4(
+            binary_search_4(
                 &large[idx_l..],
                 target1,
                 target2,
@@ -582,7 +582,7 @@ pub fn intersect_skewed_large_unchecked(small: &[u16], large: &mut Vec<u16>) {
         if (idx_s + 2 <= size_s) && (idx_l < size_l) {
             let target1 = *small.get_unchecked(idx_s);
             let target2 = *small.get_unchecked(idx_s + 1);
-            binarySearch2(&large[idx_l..], target1, target2, &mut index1, &mut index2);
+            binary_search_2(&large[idx_l..], target1, target2, &mut index1, &mut index2);
             if (index1 + idx_l < size_l) && (*large.get_unchecked(idx_l + index1) == target1) {
                 *large.get_unchecked_mut(pos) = target1;
                 pos += 1;

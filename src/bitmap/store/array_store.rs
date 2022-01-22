@@ -2,19 +2,12 @@ use crate::bitmap::store::array::{
     and_assign_run, and_assign_run_unchecked, and_assign_walk, intersect_skewed_large,
     intersect_skewed_large_unchecked, intersect_skewed_small, intersect_skewed_small_unchecked,
 };
-use crate::bitmap::store::Store;
-use crate::bitmap::store::Store::Bitmap;
-use std::borrow::{Borrow, BorrowMut};
-use std::cell::{Cell, RefCell};
-use std::cmp::Ordering;
+
 use std::cmp::Ordering::*;
 use std::convert::{TryFrom, TryInto};
 use std::fmt::{Display, Formatter};
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitXor, BitXorAssign, RangeInclusive, Sub, SubAssign};
-use std::pin::Pin;
-use std::ptr::slice_from_raw_parts_mut;
 
-use super::array::simd::and;
 use super::bitmap_store::{bit, key, BitmapStore, BITMAP_LENGTH};
 
 #[derive(Clone, Eq, PartialEq)]

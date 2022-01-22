@@ -1,4 +1,3 @@
-use std::cmp::{Ordering, Ordering::*};
 use std::ops::{Bound, RangeBounds, RangeInclusive};
 
 /// Returns the container key and the index
