@@ -4,9 +4,9 @@ use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, S
 use retain_mut::RetainMut;
 
 use crate::bitmap::container::Container;
-use crate::bitmap::Pairs;
 use crate::bitmap::store::BitmapStore;
 use crate::bitmap::util::exponential_search_by_key;
+use crate::bitmap::Pairs;
 use crate::RoaringBitmap;
 
 impl RoaringBitmap {
@@ -179,7 +179,6 @@ impl RoaringBitmap {
         }
     }
 
-
     pub fn and_x86_simd(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
         let mut containers = Vec::new();
 
@@ -232,13 +231,13 @@ impl RoaringBitmap {
             match exponential_search_by_key(other, &key, |c| c.key) {
                 Ok(loc) => {
                     BitAndAssign::bitand_assign(cont, &other[loc]);
-                    other = &other[loc+1..];
+                    other = &other[loc + 1..];
                     cont.len() != 0
                 }
                 Err(loc) => {
                     other = &other[loc..];
                     false
-                },
+                }
             }
         })
     }
@@ -295,7 +294,7 @@ impl RoaringBitmap {
                 Err(loc) => {
                     other = &other[loc..];
                     false
-                },
+                }
             }
         })
     }

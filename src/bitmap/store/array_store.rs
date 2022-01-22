@@ -1,21 +1,20 @@
-use std::borrow::{Borrow, BorrowMut};
-use crate::bitmap::util::exponential_search;
+use crate::bitmap::store::op_vector;
 use crate::bitmap::store::Store;
 use crate::bitmap::store::Store::Bitmap;
+use crate::bitmap::util::exponential_search;
+use std::borrow::{Borrow, BorrowMut};
+use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::cmp::Ordering::*;
 use std::convert::{TryFrom, TryInto};
 use std::fmt::{Display, Formatter};
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitXor, BitXorAssign, RangeInclusive, Sub, SubAssign};
-use std::ptr::slice_from_raw_parts_mut;
-use std::cell::{Cell, RefCell};
 use std::pin::Pin;
-use crate::bitmap::store::op_vector;
+use std::ptr::slice_from_raw_parts_mut;
 
 use super::bitmap_store::{bit, key, BitmapStore, BITMAP_LENGTH};
 
 thread_local!(static THREAD_LOCAL_ARRAY: Cell<Option<Vec<u16>>> = Cell::new(None));
-
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct ArrayStore {
@@ -258,7 +257,7 @@ impl BitOr<Self> for &ArrayStore {
 }
 
 // #[inline]
-fn or_array_array(lhs: &ArrayStore, rhs: & ArrayStore) -> ArrayStore {
+fn or_array_array(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
     let mut vec = Vec::new();
 
     // Traverse both arrays
@@ -271,11 +270,11 @@ fn or_array_array(lhs: &ArrayStore, rhs: & ArrayStore) -> ArrayStore {
             Less => {
                 vec.push(*a);
                 i += 1
-            },
+            }
             Greater => {
                 vec.push(*b);
                 j += 1
-            },
+            }
             Equal => {
                 vec.push(*a);
                 i += 1;
@@ -314,7 +313,7 @@ impl BitAndAssign<&BitmapStore> for ArrayStore {
 
 //#[inline(never)]
 // #[inline]
-fn and_array_array(lhs: &ArrayStore, rhs: & ArrayStore) -> ArrayStore {
+fn and_array_array(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
     let mut vec = Vec::new();
 
     // Traverse both arrays
@@ -339,7 +338,7 @@ fn and_array_array(lhs: &ArrayStore, rhs: & ArrayStore) -> ArrayStore {
 
 //#[inline(never)]
 // #[inline]
-fn and_assign_array_array(lhs: &mut ArrayStore, rhs: & ArrayStore) {
+fn and_assign_array_array(lhs: &mut ArrayStore, rhs: &ArrayStore) {
     let mut i = 0;
     lhs.vec.retain(|x| {
         i += rhs.iter().skip(i).position(|y| y >= x).unwrap_or(rhs.vec.len());
@@ -349,31 +348,31 @@ fn and_assign_array_array(lhs: &mut ArrayStore, rhs: & ArrayStore) {
 
 //#[inline(never)]
 // #[inline]
-pub fn and_assign_array_walk(lhs: &mut ArrayStore, rhs: & ArrayStore) {
+pub fn and_assign_array_walk(lhs: &mut ArrayStore, rhs: &ArrayStore) {
     and_assign_walk(&mut lhs.vec, rhs.as_slice());
 }
 
 //#[inline(never)]
 // #[inline]
-pub fn and_assign_array_run(lhs: &mut ArrayStore, rhs: & ArrayStore) {
+pub fn and_assign_array_run(lhs: &mut ArrayStore, rhs: &ArrayStore) {
     and_assign_run(&mut lhs.vec, rhs.as_slice());
 }
 
 //#[inline(never)]
 // #[inline]
-pub fn and_assign_array_gallop(lhs: &mut ArrayStore, rhs: & ArrayStore) {
+pub fn and_assign_array_gallop(lhs: &mut ArrayStore, rhs: &ArrayStore) {
     and_assign_gallop(&mut lhs.vec, rhs.as_slice());
 }
 
 //#[inline(never)]
 // #[inline]
-pub fn and_assign_array_opt(lhs: &mut ArrayStore, rhs: & ArrayStore) {
+pub fn and_assign_array_opt(lhs: &mut ArrayStore, rhs: &ArrayStore) {
     and_assign_opt(&mut lhs.vec, rhs.vec.as_slice())
 }
 
 //#[inline(never)]
 // #[inline]
-pub fn and_assign_array_opt_unsafe(lhs: &mut ArrayStore, rhs: & ArrayStore) {
+pub fn and_assign_array_opt_unsafe(lhs: &mut ArrayStore, rhs: &ArrayStore) {
     and_assign_opt_unchecked(&mut lhs.vec, rhs.vec.as_slice())
 }
 
@@ -383,7 +382,7 @@ pub fn and_x86_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
     x
 }
 
-pub fn and_assign_x86_simd(lhs: &mut ArrayStore, rhs: & ArrayStore) {
+pub fn and_assign_x86_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
     const THRESHOLD: usize = 64;
     if lhs.vec.len() * THRESHOLD < rhs.vec.len() {
         intersect_skewed_small_unchecked(&mut lhs.vec, rhs.as_slice());
@@ -402,7 +401,7 @@ pub fn and_std_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
     x
 }
 
-pub fn and_assign_std_simd(lhs: &mut ArrayStore, rhs: & ArrayStore) {
+pub fn and_assign_std_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
     const THRESHOLD: usize = 64;
     if lhs.vec.len() * THRESHOLD < rhs.vec.len() {
         intersect_skewed_small_unchecked(&mut lhs.vec, rhs.as_slice());
@@ -456,19 +455,25 @@ pub fn and_assign_run(lhs: &mut Vec<u16>, rhs: &[u16]) {
 
     'outer: loop {
         while lhs[i] < rhs[j] {
-            i +=1;
-            if i == lhs.len() { break 'outer }
+            i += 1;
+            if i == lhs.len() {
+                break 'outer;
+            }
         }
         while lhs[i] > rhs[j] {
-            j +=1;
-            if j == rhs.len() { break 'outer }
+            j += 1;
+            if j == rhs.len() {
+                break 'outer;
+            }
         }
         if lhs[i] == rhs[j] {
             lhs[k] = lhs[i];
             i += 1;
             j += 1;
             k += 1;
-            if i == lhs.len() || j == rhs.len() { break 'outer }
+            if i == lhs.len() || j == rhs.len() {
+                break 'outer;
+            }
         }
     }
 
@@ -496,19 +501,25 @@ pub fn and_assign_run_unchecked(lhs: &mut Vec<u16>, rhs: &[u16]) {
     unsafe {
         'outer: loop {
             while *lhs.get_unchecked(i) < *rhs.get_unchecked(j) {
-                i +=1;
-                if i == lhs.len() { break 'outer }
+                i += 1;
+                if i == lhs.len() {
+                    break 'outer;
+                }
             }
             while *lhs.get_unchecked(i) > *rhs.get_unchecked(j) {
-                j +=1;
-                if j == rhs.len() { break 'outer }
+                j += 1;
+                if j == rhs.len() {
+                    break 'outer;
+                }
             }
             if *lhs.get_unchecked(i) == *rhs.get_unchecked(j) {
                 *lhs.get_unchecked_mut(k) = *lhs.get_unchecked(i);
                 i += 1;
                 j += 1;
                 k += 1;
-                if i == lhs.len() || j == rhs.len() { break 'outer }
+                if i == lhs.len() || j == rhs.len() {
+                    break 'outer;
+                }
             }
         }
         lhs.set_len(k);
@@ -542,14 +553,18 @@ fn and_assign_gallop(lhs: &mut Vec<u16>, rhs: &[u16]) {
                     count_lt += 1;
                     count_gt = 0;
                     count_eq = 0;
-                    if i >= lhs.len() { break 'outer; }
+                    if i >= lhs.len() {
+                        break 'outer;
+                    }
                 }
                 Greater => {
                     j += 1;
                     count_lt = 0;
                     count_gt += 1;
                     count_eq = 0;
-                    if j >= rhs.len() { break 'outer; }
+                    if j >= rhs.len() {
+                        break 'outer;
+                    }
                 }
                 Equal => {
                     if count_eq < MIN_RUN {
@@ -560,59 +575,77 @@ fn and_assign_gallop(lhs: &mut Vec<u16>, rhs: &[u16]) {
                         count_lt = 0;
                         count_gt = 0;
                         count_eq += 1;
-                        if i >= lhs.len() || j >= rhs.len() { break 'outer; }
+                        if i >= lhs.len() || j >= rhs.len() {
+                            break 'outer;
+                        }
                     } else {
-                        let run_offset = 1 + lhs[i+1..].iter().zip(rhs[j+1..].iter())
+                        let run_offset = 1 + lhs[i + 1..]
+                            .iter()
+                            .zip(rhs[j + 1..].iter())
                             .take_while(|(a, b)| a == b)
                             .count();
-                        lhs[k..k+run_offset].copy_from_slice(&rhs[j..j+run_offset]);
+                        lhs[k..k + run_offset].copy_from_slice(&rhs[j..j + run_offset]);
                         i += run_offset;
                         j += run_offset;
                         k += run_offset;
 
-                        if i >= lhs.len() || j >= rhs.len() { break 'outer; }
+                        if i >= lhs.len() || j >= rhs.len() {
+                            break 'outer;
+                        }
                         break; // break inner to reset counters
                     }
                 }
             }
-            if (count_lt | count_gt) >= min_gallop { break; }
+            if (count_lt | count_gt) >= min_gallop {
+                break;
+            }
         } // end walk loop
 
         loop {
             match exponential_search(&lhs[i..], &rhs[j]) {
                 Ok(v) => {
-                    lhs[k] = lhs[i+v];
+                    lhs[k] = lhs[i + v];
                     i += v + 1;
                     j += 1;
                     k += 1;
                     count_lt = v + 1;
-                    if i >= lhs.len() || j >= rhs.len() { break 'outer; }
+                    if i >= lhs.len() || j >= rhs.len() {
+                        break 'outer;
+                    }
                 }
                 Err(v) => {
                     i += v;
                     count_lt = v;
-                    if i >= lhs.len() { break 'outer; }
+                    if i >= lhs.len() {
+                        break 'outer;
+                    }
                 }
             };
 
             match exponential_search(&rhs[j..], &lhs[i]) {
                 Ok(v) => {
-                    lhs[k] = rhs[j+v];
+                    lhs[k] = rhs[j + v];
                     i += 1;
                     j += v + 1;
                     k += 1;
                     count_gt = v + 1;
-                    if i >= lhs.len() || j >= rhs.len() { break 'outer; }
+                    if i >= lhs.len() || j >= rhs.len() {
+                        break 'outer;
+                    }
                 }
                 Err(v) => {
                     j += v;
                     count_gt = v;
-                    if j >= rhs.len() { break 'outer; }
+                    if j >= rhs.len() {
+                        break 'outer;
+                    }
                 }
             };
 
             min_gallop = min_gallop.saturating_sub(1);
-            if count_lt < MIN_GALLOP && count_gt < MIN_GALLOP { break; }
+            if count_lt < MIN_GALLOP && count_gt < MIN_GALLOP {
+                break;
+            }
         }
 
         min_gallop += 2; // Penalize for leaving gallop mode
@@ -622,7 +655,7 @@ fn and_assign_gallop(lhs: &mut Vec<u16>, rhs: &[u16]) {
 }
 
 // #[inline]
-fn and_assign_array_bitmap(lhs: &mut ArrayStore, rhs: & BitmapStore) {
+fn and_assign_array_bitmap(lhs: &mut ArrayStore, rhs: &BitmapStore) {
     lhs.vec.retain(|x| rhs.contains(*x));
 }
 
@@ -766,7 +799,6 @@ pub fn union_gallop(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
         let mut count1: usize = 0; // Number of times in a row that first run won
         let mut count2: usize = 0; // Number of times in a row that second run won
 
-
         // Do the straightforward thing until (if ever) one run starts
         // winning consistently.
         dev_println!("enter walk");
@@ -785,7 +817,9 @@ pub fn union_gallop(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
                     count1 += 1;
                     count2 = 0;
                     dev_println!("vec: {:?}\n\n", vec);
-                    if lhs.is_empty() { break 'outer; }
+                    if lhs.is_empty() {
+                        break 'outer;
+                    }
                 }
                 Greater => {
                     dev_println!("r");
@@ -794,7 +828,9 @@ pub fn union_gallop(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
                     count1 = 0;
                     count2 += 1;
                     dev_println!("vec: {:?}\n\n", vec);
-                    if rhs.is_empty() { break 'outer; }
+                    if rhs.is_empty() {
+                        break 'outer;
+                    }
                 }
                 Equal => {
                     dev_println!("l+r");
@@ -804,12 +840,15 @@ pub fn union_gallop(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
                     count1 = 0;
                     count2 = 0;
                     dev_println!("vec: {:?}\n\n", vec);
-                    if lhs.is_empty() || rhs.is_empty() { break 'outer; }
+                    if lhs.is_empty() || rhs.is_empty() {
+                        break 'outer;
+                    }
                 }
             }
-            if (count1 | count2) >= min_gallop { break; }
+            if (count1 | count2) >= min_gallop {
+                break;
+            }
         }
-
 
         // One run is winning so consistently that galloping may be a
         // huge win. So try that, and continue galloping until (if ever)
@@ -826,7 +865,9 @@ pub fn union_gallop(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
                     count1 = v + 1;
                     dev_println!("galloped left {}", count1);
                     dev_println!("vec: {:?}\n\n", vec);
-                    if lhs.is_empty() || rhs.is_empty() { break 'outer; }
+                    if lhs.is_empty() || rhs.is_empty() {
+                        break 'outer;
+                    }
                 }
                 Err(v) => {
                     vec.extend_from_slice(&lhs[..v]);
@@ -834,7 +875,9 @@ pub fn union_gallop(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
                     count1 = v;
                     dev_println!("galloped left {}", count1);
                     dev_println!("vec: {:?}\n\n", vec);
-                    if lhs.is_empty() { break 'outer; }
+                    if lhs.is_empty() {
+                        break 'outer;
+                    }
                 }
             };
 
@@ -848,7 +891,9 @@ pub fn union_gallop(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
                     count2 = v + 1;
                     dev_println!("galloped right {}", count2);
                     dev_println!("vec: {:?}\n\n", vec);
-                    if lhs.is_empty() || rhs.is_empty() { break 'outer; }
+                    if lhs.is_empty() || rhs.is_empty() {
+                        break 'outer;
+                    }
                 }
                 Err(v) => {
                     vec.extend_from_slice(&rhs[..v]);
@@ -856,12 +901,16 @@ pub fn union_gallop(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
                     count2 = v;
                     dev_println!("galloped right {}", count2);
                     dev_println!("vec: {:?}\n\n", vec);
-                    if rhs.is_empty() { break 'outer; }
+                    if rhs.is_empty() {
+                        break 'outer;
+                    }
                 }
             };
 
             min_gallop = min_gallop.saturating_sub(1);
-            if count1 < MIN_GALLOP && count2 < MIN_GALLOP { break; }
+            if count1 < MIN_GALLOP && count2 < MIN_GALLOP {
+                break;
+            }
         }
 
         min_gallop += 2; // Penalize for leaving gallop mode
@@ -897,7 +946,6 @@ pub fn union_gallop_opt(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
         let mut count_gt: usize = 0; // Number of times in a row that second run won
         let mut count_eq: usize = 0; // Number of times in a row that both were equal
 
-
         // Do the straightforward thing until (if ever) one run starts
         // winning consistently.
         loop {
@@ -913,14 +961,18 @@ pub fn union_gallop_opt(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
                 count_lt += 1;
                 count_gt = 0;
                 count_eq = 0;
-                if lhs.is_empty() { break 'outer; }
+                if lhs.is_empty() {
+                    break 'outer;
+                }
             } else if cmp == Greater {
                 vec.push(*b);
                 rhs = &rhs[1..];
                 count_lt = 0;
                 count_gt += 1;
                 count_eq = 0;
-                if rhs.is_empty() { break 'outer; }
+                if rhs.is_empty() {
+                    break 'outer;
+                }
             } else {
                 if count_eq < MIN_RUN {
                     vec.push(*a);
@@ -929,22 +981,29 @@ pub fn union_gallop_opt(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
                     count_lt = 0;
                     count_gt = 0;
                     count_eq += 1;
-                    if lhs.is_empty() || rhs.is_empty() { break 'outer; }
+                    if lhs.is_empty() || rhs.is_empty() {
+                        break 'outer;
+                    }
                 } else {
-                    let run_offset = 1 + lhs[1..].iter().zip(rhs[1..].iter())
+                    let run_offset = 1 + lhs[1..]
+                        .iter()
+                        .zip(rhs[1..].iter())
                         .take_while(|(a, b)| a == b)
                         .count();
                     vec.extend_from_slice(&lhs[..run_offset]);
                     lhs = &lhs[run_offset..];
                     rhs = &rhs[run_offset..];
-                    if lhs.is_empty() || rhs.is_empty() { break 'outer; }
+                    if lhs.is_empty() || rhs.is_empty() {
+                        break 'outer;
+                    }
                     break; // break inner to reset counters
                 }
             }
 
-            if (count_lt | count_gt) >= min_gallop { break; }
+            if (count_lt | count_gt) >= min_gallop {
+                break;
+            }
         }
-
 
         // One run is winning so consistently that galloping may be a
         // huge win. So try that, and continue galloping until (if ever)
@@ -956,13 +1015,17 @@ pub fn union_gallop_opt(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
                     lhs = &lhs[i + 1..];
                     rhs = &rhs[1..];
                     count_lt = i + 1;
-                    if lhs.is_empty() || rhs.is_empty() { break 'outer; }
+                    if lhs.is_empty() || rhs.is_empty() {
+                        break 'outer;
+                    }
                 }
                 Err(i) => {
                     vec.extend_from_slice(&lhs[..i]);
                     lhs = &lhs[i..];
                     count_lt = i;
-                    if lhs.is_empty() { break 'outer; }
+                    if lhs.is_empty() {
+                        break 'outer;
+                    }
                 }
             };
 
@@ -972,25 +1035,29 @@ pub fn union_gallop_opt(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
                     rhs = &rhs[i + 1..];
                     lhs = &lhs[1..];
                     count_gt = i + 1;
-                    if lhs.is_empty() || rhs.is_empty() { break 'outer; }
+                    if lhs.is_empty() || rhs.is_empty() {
+                        break 'outer;
+                    }
                 }
                 Err(i) => {
                     vec.extend_from_slice(&rhs[..i]);
                     rhs = &rhs[i..];
                     count_gt = i;
-                    if rhs.is_empty() { break 'outer; }
+                    if rhs.is_empty() {
+                        break 'outer;
+                    }
                 }
             };
 
             min_gallop = min_gallop.saturating_sub(1);
-            if count_lt < MIN_GALLOP && count_gt < MIN_GALLOP { break; }
+            if count_lt < MIN_GALLOP && count_gt < MIN_GALLOP {
+                break;
+            }
         }
 
         min_gallop += 2; // Penalize for leaving gallop mode
     }
     // end of 'outer loop
-
-
 
     // Store remaining elements of the arrays
     vec.extend_from_slice(&lhs);
@@ -998,9 +1065,6 @@ pub fn union_gallop_opt(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
 
     vec
 }
-
-
-
 
 /**
  * Branchless binary search going after 4 values at once.
@@ -1029,13 +1093,19 @@ fn binarySearch4(
     let mut base4 = array;
     let mut n = array.len();
 
-    if n == 0 { return; }
+    if n == 0 {
+        return;
+    }
     while n > 1 {
         let half = n / 2;
-        base1 = if unsafe { *base1.get_unchecked(half) } < target1 { &base1[half..] } else { base1 };
-        base2 = if unsafe { *base2.get_unchecked(half) } < target2 { &base2[half..] } else { base2 };
-        base3 = if unsafe { *base3.get_unchecked(half) } < target3 { &base3[half..] } else { base3 };
-        base4 = if unsafe { *base4.get_unchecked(half) } < target4 { &base4[half..] } else { base4 };
+        base1 =
+            if unsafe { *base1.get_unchecked(half) } < target1 { &base1[half..] } else { base1 };
+        base2 =
+            if unsafe { *base2.get_unchecked(half) } < target2 { &base2[half..] } else { base2 };
+        base3 =
+            if unsafe { *base3.get_unchecked(half) } < target3 { &base3[half..] } else { base3 };
+        base4 =
+            if unsafe { *base4.get_unchecked(half) } < target4 { &base4[half..] } else { base4 };
         n -= half;
     }
     *index1 = (unsafe { *base1.get_unchecked(0) } < target1) as usize + array.len() - base1.len();
@@ -1043,7 +1113,6 @@ fn binarySearch4(
     *index3 = (unsafe { *base3.get_unchecked(0) } < target3) as usize + array.len() - base3.len();
     *index4 = (unsafe { *base4.get_unchecked(0) } < target4) as usize + array.len() - base4.len();
 }
-
 
 /**
  * Branchless binary search going after 2 values at once.
@@ -1065,12 +1134,16 @@ fn binarySearch2(
     let mut base1 = array;
     let mut base2 = array;
     let mut n = array.len();
-    if n == 0 { return; }
+    if n == 0 {
+        return;
+    }
 
     while n > 1 {
         let half = n / 2;
-        base1 = if unsafe { *base1.get_unchecked(half) } < target1 { &base1[half..] } else { base1 };
-        base2 = if unsafe { *base2.get_unchecked(half) } < target2 { &base2[half..] } else { base2 };
+        base1 =
+            if unsafe { *base1.get_unchecked(half) } < target1 { &base1[half..] } else { base1 };
+        base2 =
+            if unsafe { *base2.get_unchecked(half) } < target2 { &base2[half..] } else { base2 };
         n -= half;
     }
 
@@ -1103,8 +1176,17 @@ fn intersect_skewed_small(small: &mut Vec<u16>, large: &[u16]) {
         let target2 = small[idx_s + 1];
         let target3 = small[idx_s + 2];
         let target4 = small[idx_s + 3];
-        binarySearch4(&large[idx_l..], target1, target2, target3, target4,
-                      &mut index1, &mut index2, &mut index3, &mut index4);
+        binarySearch4(
+            &large[idx_l..],
+            target1,
+            target2,
+            target3,
+            target4,
+            &mut index1,
+            &mut index2,
+            &mut index3,
+            &mut index4,
+        );
         if (index1 + idx_l < size_l) && (large[idx_l + index1] == target1) {
             small[pos] = target1;
             pos += 1;
@@ -1146,7 +1228,7 @@ fn intersect_skewed_small(small: &mut Vec<u16>, large: &[u16]) {
                 small[pos] = val_s;
                 pos += 1;
             }
-            _ => ()
+            _ => (),
         }
     }
     small.truncate(pos)
@@ -1178,8 +1260,17 @@ fn intersect_skewed_small_unchecked(small: &mut Vec<u16>, large: &[u16]) {
             let target2 = *small.get_unchecked(idx_s + 1);
             let target3 = *small.get_unchecked(idx_s + 2);
             let target4 = *small.get_unchecked(idx_s + 3);
-            binarySearch4(&large[idx_l..], target1, target2, target3, target4,
-                          &mut index1, &mut index2, &mut index3, &mut index4);
+            binarySearch4(
+                &large[idx_l..],
+                target1,
+                target2,
+                target3,
+                target4,
+                &mut index1,
+                &mut index2,
+                &mut index3,
+                &mut index4,
+            );
             if (index1 + idx_l < size_l) && (*large.get_unchecked(idx_l + index1) == target1) {
                 *small.get_unchecked_mut(pos) = target1;
                 pos += 1;
@@ -1221,7 +1312,7 @@ fn intersect_skewed_small_unchecked(small: &mut Vec<u16>, large: &[u16]) {
                     *small.get_unchecked_mut(pos) = *val_s;
                     pos += 1;
                 }
-                _ => ()
+                _ => (),
             }
         }
     }
@@ -1253,8 +1344,17 @@ fn intersect_skewed_large(small: &[u16], large: &mut Vec<u16>) {
         let target2 = small[idx_s + 1];
         let target3 = small[idx_s + 2];
         let target4 = small[idx_s + 3];
-        binarySearch4(&large[idx_l..], target1, target2, target3, target4,
-                      &mut index1, &mut index2, &mut index3, &mut index4);
+        binarySearch4(
+            &large[idx_l..],
+            target1,
+            target2,
+            target3,
+            target4,
+            &mut index1,
+            &mut index2,
+            &mut index3,
+            &mut index4,
+        );
         if (index1 + idx_l < size_l) && (large[idx_l + index1] == target1) {
             large[pos] = target1;
             pos += 1;
@@ -1296,7 +1396,7 @@ fn intersect_skewed_large(small: &[u16], large: &mut Vec<u16>) {
                 large[pos] = val_s;
                 pos += 1;
             }
-            _ => ()
+            _ => (),
         }
     }
     large.truncate(pos)
@@ -1328,8 +1428,17 @@ fn intersect_skewed_large_unchecked(small: &[u16], large: &mut Vec<u16>) {
             let target2 = *small.get_unchecked(idx_s + 1);
             let target3 = *small.get_unchecked(idx_s + 2);
             let target4 = *small.get_unchecked(idx_s + 3);
-            binarySearch4(&large[idx_l..], target1, target2, target3, target4,
-                          &mut index1, &mut index2, &mut index3, &mut index4);
+            binarySearch4(
+                &large[idx_l..],
+                target1,
+                target2,
+                target3,
+                target4,
+                &mut index1,
+                &mut index2,
+                &mut index3,
+                &mut index4,
+            );
             if (index1 + idx_l < size_l) && (*large.get_unchecked(idx_l + index1) == target1) {
                 *large.get_unchecked_mut(pos) = target1;
                 pos += 1;
@@ -1371,7 +1480,7 @@ fn intersect_skewed_large_unchecked(small: &[u16], large: &mut Vec<u16>) {
                     *large.get_unchecked_mut(pos) = *val_s;
                     pos += 1;
                 }
-                _ => ()
+                _ => (),
             }
         }
     }
@@ -1403,7 +1512,6 @@ fn and_assign_opt_unchecked(lhs: &mut Vec<u16>, rhs: &[u16]) {
         and_assign_run_unchecked(lhs, rhs);
     }
 }
-
 
 #[cfg(test)]
 mod tests {

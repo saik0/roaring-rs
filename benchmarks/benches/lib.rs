@@ -3,11 +3,11 @@ mod prefetched_datasets_paths;
 
 use itertools::Itertools;
 use std::fs::{DirEntry, File};
+use std::io::{BufReader, Read};
 use std::num::ParseIntError;
+use std::ops::BitOrAssign;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
-use std::io::{BufReader, Read};
-use std::ops::BitOrAssign;
 
 use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
@@ -275,12 +275,7 @@ fn binary_op(
 
 fn and2(c: &mut Criterion) {
     let c_arrays: Vec<(DirectoryName, Vec<croaring::Bitmap>)> =
-        DATASETS
-            .iter()
-            .map(|&dir| {
-                (dir, parse_c_dir_bin(dir, "arrays"))
-            })
-            .collect();
+        DATASETS.iter().map(|&dir| (dir, parse_c_dir_bin(dir, "arrays"))).collect();
 
     let mut group = c.benchmark_group(format!("pairwise_and"));
 
@@ -383,7 +378,6 @@ fn and2(c: &mut Criterion) {
             );
         });
 
-
         // group.bench_function(BenchmarkId::new(*filename, "walk".to_string()), |b| {
         //     b.iter_batched(
         //         || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
@@ -471,7 +465,6 @@ fn and2(c: &mut Criterion) {
 
     for (filename, bitmaps) in c_arrays.iter() {
         // Number of bits
-
 
         group.bench_function(BenchmarkId::new(*filename, "c".to_string()), |b| {
             b.iter_batched(
@@ -570,7 +563,6 @@ fn or2(c: &mut Criterion) {
                 BatchSize::SmallInput,
             );
         });
-
 
         // group.bench_function(BenchmarkId::new(*filename, "rs_gallop".to_string()), |b| {
         //     b.iter_batched(

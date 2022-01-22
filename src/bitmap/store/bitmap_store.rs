@@ -335,7 +335,7 @@ impl BitOrAssign<&ArrayStore> for BitmapStore {
 }
 
 #[inline(never)]
-fn or_assign_bitmap_array(bitmap: &mut BitmapStore, rhs: & ArrayStore) {
+fn or_assign_bitmap_array(bitmap: &mut BitmapStore, rhs: &ArrayStore) {
     for &index in rhs.iter() {
         let (key, bit) = (key(index), bit(index));
         let old_w = bitmap.bits[key];
@@ -346,7 +346,7 @@ fn or_assign_bitmap_array(bitmap: &mut BitmapStore, rhs: & ArrayStore) {
 }
 
 #[inline(never)]
-fn or_assign_bitmap_bitmap(bitmap: &mut BitmapStore, rhs: & BitmapStore) {
+fn or_assign_bitmap_bitmap(bitmap: &mut BitmapStore, rhs: &BitmapStore) {
     op_bitmaps(bitmap, rhs, BitOrAssign::bitor_assign);
 }
 
@@ -357,7 +357,7 @@ impl BitAndAssign<&Self> for BitmapStore {
 }
 
 #[inline(never)]
-fn and_assign_bitmap_bitmap(lhs: &mut BitmapStore, rhs: & BitmapStore) {
+fn and_assign_bitmap_bitmap(lhs: &mut BitmapStore, rhs: &BitmapStore) {
     op_bitmaps(lhs, rhs, BitAndAssign::bitand_assign);
 }
 

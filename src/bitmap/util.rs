@@ -1,7 +1,6 @@
 use std::cmp::{Ordering, Ordering::*};
 use std::ops::{Bound, RangeBounds, RangeInclusive};
 
-
 /// Returns the container key and the index
 /// in this container for a given integer.
 #[inline]
@@ -18,21 +17,24 @@ pub fn join(high: u16, low: u16) -> u32 {
 
 #[inline]
 pub fn exponential_search<T>(slice: &[T], elem: &T) -> Result<usize, usize>
-    where T: Ord
+where
+    T: Ord,
 {
     exponential_search_by(slice, |x| x.cmp(elem))
 }
 
 #[inline]
 pub fn exponential_search_by_key<T, B, F>(slice: &[T], b: &B, mut f: F) -> Result<usize, usize>
-    where F: FnMut(&T) -> B,
-          B: Ord
+where
+    F: FnMut(&T) -> B,
+    B: Ord,
 {
     exponential_search_by(slice, |k| f(k).cmp(b))
 }
 
 pub fn exponential_search_by<T, F>(slice: &[T], mut f: F) -> Result<usize, usize>
-    where F: FnMut(&T) -> Ordering,
+where
+    F: FnMut(&T) -> Ordering,
 {
     let mut i = 1;
     while i < slice.len() {
@@ -58,8 +60,8 @@ pub fn exponential_search_by<T, F>(slice: &[T], mut f: F) -> Result<usize, usize
 
 /// Convert a `RangeBounds<u32>` object to `RangeInclusive<u32>`,
 pub fn convert_range_to_inclusive<R>(range: R) -> Option<RangeInclusive<u32>>
-    where
-        R: RangeBounds<u32>,
+where
+    R: RangeBounds<u32>,
 {
     let start: u32 = match range.start_bound() {
         Bound::Included(&i) => i,

@@ -2,12 +2,16 @@ mod array_store;
 mod bitmap_store;
 mod op_vector;
 
+use crate::bitmap::store::array_store::{
+    and_assign_array_gallop, and_assign_array_opt, and_assign_array_opt_unsafe,
+    and_assign_array_run, and_assign_array_walk, and_assign_run, and_assign_run_unchecked,
+    and_assign_std_simd, and_assign_x86_simd,
+};
 use std::mem;
 use std::ops::{
     BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, RangeInclusive, Sub, SubAssign,
 };
 use std::{slice, vec};
-use crate::bitmap::store::array_store::{and_assign_array_walk, and_assign_array_gallop, and_assign_array_opt, and_assign_array_opt_unsafe, and_assign_run_unchecked, and_assign_run, and_assign_array_run, and_assign_x86_simd, and_assign_std_simd};
 
 use self::bitmap_store::BITMAP_LENGTH;
 use self::Store::{Array, Bitmap};
@@ -173,7 +177,7 @@ impl Store {
     pub fn union_vector(&mut self, rhs: &Store) {
         match (self, &rhs) {
             (&mut Array(ref mut vec1), &Array(ref vec2)) => {
-                *vec1 = ArrayStore::from_vec_unchecked(op_vector ::union_vector(
+                *vec1 = ArrayStore::from_vec_unchecked(op_vector::union_vector(
                     vec1.as_slice(),
                     vec2.as_slice(),
                 ));
@@ -195,7 +199,7 @@ impl Store {
     pub fn and_x86_simd(&self, rhs: &Store) -> Store {
         match (self, rhs) {
             (&Array(ref vec1), &Array(ref vec2)) => Array(ArrayStore::from_vec_unchecked(
-                op_vector::and_x86_simd(vec1.as_slice(), vec2.as_slice())
+                op_vector::and_x86_simd(vec1.as_slice(), vec2.as_slice()),
             )),
             (&Bitmap(..), &Array(..)) => {
                 let mut rhs = rhs.clone();
@@ -213,7 +217,7 @@ impl Store {
     pub fn and_std_simd(&self, rhs: &Store) -> Store {
         match (self, rhs) {
             (&Array(ref vec1), &Array(ref vec2)) => Array(ArrayStore::from_vec_unchecked(
-                op_vector::and_std_simd(vec1.as_slice(), vec2.as_slice())
+                op_vector::and_std_simd(vec1.as_slice(), vec2.as_slice()),
             )),
             (&Bitmap(..), &Array(..)) => {
                 let mut rhs = rhs.clone();
@@ -234,7 +238,7 @@ impl Store {
                 let mut lhs = vec1.clone();
                 and_assign_array_opt_unsafe(&mut lhs, vec2);
                 Array(lhs)
-            },
+            }
             (&Bitmap(..), &Array(..)) => {
                 let mut rhs = rhs.clone();
                 BitAndAssign::bitand_assign(&mut rhs, self);
