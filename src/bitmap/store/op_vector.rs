@@ -19,9 +19,9 @@ mod util {
         lhs: Simd<U, LANES>,
         rhs: Simd<U, LANES>,
     ) -> Simd<U, LANES>
-    where
-        U: SimdElement + PartialOrd,
-        LaneCount<LANES>: SupportedLaneCount,
+        where
+            U: SimdElement + PartialOrd,
+            LaneCount<LANES>: SupportedLaneCount,
     {
         lhs.lanes_le(rhs).select(lhs, rhs)
     }
@@ -32,9 +32,9 @@ mod util {
         lhs: Simd<U, LANES>,
         rhs: Simd<U, LANES>,
     ) -> Simd<U, LANES>
-    where
-        U: SimdElement + PartialOrd,
-        LaneCount<LANES>: SupportedLaneCount,
+        where
+            U: SimdElement + PartialOrd,
+            LaneCount<LANES>: SupportedLaneCount,
     {
         lhs.lanes_gt(rhs).select(lhs, rhs)
     }
@@ -42,9 +42,9 @@ mod util {
     /// write `v` to slice `out`
     #[inline]
     pub fn store<U, const LANES: usize>(v: Simd<U, LANES>, out: &mut [U])
-    where
-        U: SimdElement + PartialOrd,
-        LaneCount<LANES>: SupportedLaneCount,
+        where
+            U: SimdElement + PartialOrd,
+            LaneCount<LANES>: SupportedLaneCount,
     {
         out[..LANES].copy_from_slice(&v.to_array())
     }
@@ -55,9 +55,9 @@ mod util {
     ///   - The caller must ensure `LANES` does not exceed the allocation for `out`
     #[inline]
     pub unsafe fn store_unchecked<U, const LANES: usize>(v: Simd<U, LANES>, out: &mut [U])
-    where
-        U: SimdElement + PartialOrd,
-        LaneCount<LANES>: SupportedLaneCount,
+        where
+            U: SimdElement + PartialOrd,
+            LaneCount<LANES>: SupportedLaneCount,
     {
         unsafe { std::ptr::write_unaligned(out as *mut _ as *mut Simd<U, LANES>, v) }
     }
@@ -88,7 +88,7 @@ mod shim {
     #[inline]
     pub fn swizzle_bytes(a: u8x16, b: u8x16) -> u8x16 {
         #[cfg(target_feature = "ssse3")]
-        unsafe {
+            unsafe {
             #[cfg(target_arch = "x86")]
             use std::arch::x86::_mm_shuffle_epi8;
             #[cfg(target_arch = "x86_64")]
@@ -101,7 +101,7 @@ mod shim {
 
         // TODO test
         #[cfg(target_feature = "simd128")]
-        unsafe {
+            unsafe {
             #[cfg(target_arch = "wasm32")]
             use std::arch::wasm32::u8x16_swizzle;
             #[cfg(target_arch = "wasm64")]
@@ -135,7 +135,7 @@ mod shim {
     #[inline]
     pub fn to_bitmask(mask: mask16x8) -> usize {
         #[cfg(target_feature = "sse2")]
-        unsafe {
+            unsafe {
             #[cfg(target_arch = "x86")]
             use std::arch::x86::{_mm_movemask_epi8, _mm_packs_epi16, _mm_setzero_si128};
             #[cfg(target_arch = "x86_64")]
@@ -151,7 +151,7 @@ mod shim {
 
         // TODO test
         #[cfg(target_feature = "simd128")]
-        unsafe {
+            unsafe {
             #[cfg(target_arch = "wasm32")]
             use std::arch::wasm32::i16x8_bitmask;
             #[cfg(target_arch = "wasm64")]
@@ -285,6 +285,152 @@ pub fn and_std_simd(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     out
 }
 
+/// A static swizzle used by store_unique
+struct UniqueSwizzle;
+
+impl Swizzle2<8, 8> for UniqueSwizzle {
+    const INDEX: [Which; 8] = [
+        Which::Second(7),
+        Which::First(0),
+        Which::First(1),
+        Which::First(2),
+        Which::First(3),
+        Which::First(4),
+        Which::First(5),
+        Which::First(6),
+    ];
+}
+
+#[inline]
+fn store_unique_std(old: u16x8, newval: u16x8, output: &mut [u16]) -> usize {
+    let tmp: u16x8 = UniqueSwizzle::swizzle2(newval, old);
+    let mask: usize = shim::to_bitmask(tmp.lanes_eq(newval));
+    let count: usize = 8 - mask.count_ones() as usize;
+    let key: u16x8 = Simd::from_slice(&unsafe { mem::transmute::<&[u8], &[u16]>(&uniqshuf) }[mask * 8..]);
+    let val: u16x8 = shim::swizzle_u16x8(newval, key);
+    unsafe { util::store_unchecked(val, output); }
+    return count;
+}
+
+pub fn simd_merge(a: u16x8, b: u16x8) -> (u16x8, u16x8) {
+    let mut tmp: u16x8 = util::lanes_min(a, b);
+    let mut max: u16x8 = util::lanes_max(a, b);
+    tmp = tmp.rotate_lanes_left::<1>();
+    let mut min: u16x8 = util::lanes_min(tmp, max);
+    for _ in 0..6 {
+        max = util::lanes_max(tmp, max);
+        tmp = min.rotate_lanes_left::<1>();
+        min = util::lanes_min(tmp, max);
+    }
+    max = util::lanes_max(tmp, max);
+    min = min.rotate_lanes_left::<1>();
+    (min, max)
+}
+
+fn dedup(out: &mut [u16]) -> usize {
+    let mut pos: usize = 1;
+    for i in 1..out.len() {
+        if out[i] != out[i - 1] {
+            out[pos] = out[i];
+            pos += 1;
+        }
+    }
+    return pos;
+}
+
+// a one-pass SSE union algorithm
+pub fn or_std_simd(
+    lhs: &[u16],
+    rhs: &[u16],
+) -> Vec<u16> {
+    let mut out = vec![0; lhs.len() + rhs.len()];
+
+    if (lhs.len() < 8) || (rhs.len() < 8) {
+        let len = super::array_store::or_array_walk_mut(lhs, rhs, out.as_mut_slice());
+        out.truncate(len);
+        return out;
+    }
+
+    let len1: usize = lhs.len() / 8;
+    let len2: usize = rhs.len() / 8;
+
+
+    let v_a: u16x8 = unsafe { load_unchecked(lhs) };
+    let v_b: u16x8 = unsafe { load_unchecked(rhs) };
+    let mut last_store: u16x8 = Simd::splat(u16::MAX);
+    let (mut vecMin, mut vecMax) = simd_merge(v_a, v_b);
+
+    let mut pos1 = 1;
+    let mut pos2 = 1;
+
+    let mut k = 0;
+
+    k += store_unique_std(last_store, vecMin, &mut out[k..]);
+    last_store = vecMin;
+    if (pos1 < len1) && (pos2 < len2) {
+        let mut V: u16x8;
+        let mut curA: u16 = lhs[8 * pos1];
+        let mut curB: u16 = rhs[8 * pos2];
+        loop {
+            if curA <= curB {
+                V = unsafe { util::load_unchecked(&lhs[8 * pos1..]) };
+                pos1 += 1;
+                if pos1 < len1 {
+                    curA = lhs[8 * pos1];
+                } else {
+                    break;
+                }
+            } else {
+                V = unsafe { util::load_unchecked(&rhs[8 * pos2..]) };
+                pos2 += 1;
+                if pos2 < len2 {
+                    curB = rhs[8 * pos2];
+                } else {
+                    break;
+                }
+            }
+            (vecMin, vecMax) = simd_merge(V, vecMax);
+            k += store_unique_std(last_store, vecMin, &mut out[k..]);
+            last_store = vecMin;
+        }
+        (vecMin, vecMax) = simd_merge(V, vecMax);
+        k += store_unique_std(last_store, vecMin, &mut out[k..]);
+        last_store = vecMin;
+    }
+    // we finish the rest off using a scalar algorithm
+    // could be improved?
+    //
+    // copy the small end on a tmp buffer
+    let mut buffer: [u16; 16] = [0; 16];
+    /// remaining size
+    let mut rem = store_unique_std(last_store, vecMax, &mut buffer);
+    if pos1 == len1 {
+        let n = lhs.len() - 8 * len1;
+        buffer[rem..rem + n].copy_from_slice(&lhs[8 * pos1..]);
+        rem += n;
+        buffer[..rem as usize].sort_unstable();
+        rem = dedup(&mut buffer[..rem]);
+        k += super::array_store::or_array_walk_mut(
+            &buffer[..rem],
+            &rhs[8 * pos2..],
+            &mut out[k..],
+        );
+    } else {
+        let n = rhs.len() - 8 * len2;
+        buffer[rem..rem + n].copy_from_slice(&rhs[8 * pos2..]);
+        rem += n;
+        buffer[..rem as usize].sort_unstable();
+        rem = dedup(&mut buffer[..rem]);
+        k += super::array_store::or_array_walk_mut(
+            &buffer[..rem],
+            &lhs[8 * pos1..],
+            &mut out[k..],
+        );
+    }
+    out.truncate(k);
+    out
+}
+
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██╗░░██╗░█████╗░░█████╗░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░╚██╗██╔╝██╔══██╗██╔═══╝░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
@@ -302,6 +448,7 @@ use std::arch::x86_64::{
     _mm_packs_epi16, _mm_set1_epi16, _mm_setzero_si128, _mm_shuffle_epi8, _mm_storeu_si128,
     _popcnt32, _SIDD_BIT_MASK, _SIDD_CMP_EQUAL_ANY, _SIDD_UWORD_OPS,
 };
+use crate::bitmap::store::op_vector::util::load_unchecked;
 
 // Safe entry points
 

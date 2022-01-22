@@ -252,20 +252,24 @@ impl BitOr<Self> for &ArrayStore {
     type Output = ArrayStore;
 
     fn bitor(self, rhs: Self) -> Self::Output {
-        or_array_array(self, rhs)
+        or_std_simd(self, rhs)
     }
 }
 
 // #[inline]
 fn or_array_array(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
+    ArrayStore { vec: or_array_walk(lhs.as_slice(), rhs.as_slice()) }
+}
+
+pub fn or_array_walk(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     let mut vec = Vec::new();
 
     // Traverse both arrays
     let mut i = 0;
     let mut j = 0;
-    while i < lhs.vec.len() && j < rhs.vec.len() {
-        let a = unsafe { lhs.vec.get_unchecked(i) };
-        let b = unsafe { rhs.vec.get_unchecked(j) };
+    while i < lhs.len() && j < rhs.len() {
+        let a = unsafe { lhs.get_unchecked(i) };
+        let b = unsafe { rhs.get_unchecked(j) };
         match a.cmp(b) {
             Less => {
                 vec.push(*a);
@@ -283,10 +287,60 @@ fn or_array_array(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
         }
     }
 
-    vec.extend_from_slice(&lhs.vec[i..]);
-    vec.extend_from_slice(&rhs.vec[j..]);
+    vec.extend_from_slice(&lhs[i..]);
+    vec.extend_from_slice(&rhs[j..]);
 
-    ArrayStore { vec }
+    vec
+}
+
+pub fn or_array_walk_mut(lhs: &[u16], rhs: &[u16], out: &mut[u16]) -> usize {
+    // Traverse both arrays
+    let mut i = 0;
+    let mut j = 0;
+    let mut k = 0;
+    while i < lhs.len() && j < rhs.len() {
+        let a = unsafe { lhs.get_unchecked(i) };
+        let b = unsafe { rhs.get_unchecked(j) };
+        match a.cmp(b) {
+            Less => {
+                out[k] = *a;
+                i += 1;
+            }
+            Greater => {
+                out[k] = *b;
+                j += 1;
+            }
+            Equal => {
+                out[k] = *a;
+                i += 1;
+                j += 1;
+            }
+        }
+        k += 1;
+    }
+
+    if i < lhs.len() {
+        let n = lhs.len() - i;
+        out[k..k+n].copy_from_slice(&lhs[i..]);
+        k += n;
+    } else if j < rhs.len() {
+        let n = rhs.len() - j;
+        out[k..k+n].copy_from_slice(&rhs[j..]);
+        k += n;
+    }
+
+    k
+}
+
+pub fn or_std_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
+    let mut x = lhs.clone();
+    or_assign_std_simd(&mut x, rhs);
+    x
+}
+
+pub fn or_assign_std_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
+    let mut vec = op_vector::or_std_simd(lhs.as_slice(), rhs.as_slice());
+    std::mem::swap(&mut lhs.vec, &mut vec);
 }
 
 impl BitAnd<Self> for &ArrayStore {
