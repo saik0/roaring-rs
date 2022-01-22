@@ -304,6 +304,10 @@ fn store_unique(old: u16x8, newval: u16x8, output: &mut [u16]) -> usize {
     return count;
 }
 
+/// Assuming that a and b are sorted, returns a tuple of sorted output.
+/// Developed originally for merge sort using SIMD instructions.
+/// Standard merge. See, e.g., Inoue and Taura, SIMD- and Cache-Friendly
+/// Algorithm for Sorting an Array of Structures
 pub fn simd_merge(a: u16x8, b: u16x8) -> (u16x8, u16x8) {
     let mut tmp: u16x8 = util::lanes_min(a, b);
     let mut max: u16x8 = util::lanes_max(a, b);
@@ -349,48 +353,44 @@ pub fn or_std_simd(
     let len1: usize = lhs.len() / 8;
     let len2: usize = rhs.len() / 8;
 
-
     let v_a: u16x8 = unsafe { load_unchecked(lhs) };
     let v_b: u16x8 = unsafe { load_unchecked(rhs) };
-    let mut last_store: u16x8 = Simd::splat(u16::MAX);
-    let (mut vecMin, mut vecMax) = simd_merge(v_a, v_b);
+    let (mut v_min, mut v_max) = simd_merge(v_a, v_b);
 
-    let mut pos1 = 1;
-    let mut pos2 = 1;
-
+    let mut i = 1;
+    let mut j = 1;
     let mut k = 0;
-
-    k += store_unique(last_store, vecMin, &mut out[k..]);
-    last_store = vecMin;
-    if (pos1 < len1) && (pos2 < len2) {
+    k += store_unique(Simd::splat(u16::MAX), v_min, &mut out[k..]);
+    let mut v_prev: u16x8 = v_min;
+    if (i < len1) && (j < len2) {
         let mut V: u16x8;
-        let mut curA: u16 = lhs[8 * pos1];
-        let mut curB: u16 = rhs[8 * pos2];
+        let mut curA: u16 = lhs[8 * i];
+        let mut curB: u16 = rhs[8 * j];
         loop {
             if curA <= curB {
-                V = unsafe { util::load_unchecked(&lhs[8 * pos1..]) };
-                pos1 += 1;
-                if pos1 < len1 {
-                    curA = lhs[8 * pos1];
+                V = unsafe { util::load_unchecked(&lhs[8 * i..]) };
+                i += 1;
+                if i < len1 {
+                    curA = lhs[8 * i];
                 } else {
                     break;
                 }
             } else {
-                V = unsafe { util::load_unchecked(&rhs[8 * pos2..]) };
-                pos2 += 1;
-                if pos2 < len2 {
-                    curB = rhs[8 * pos2];
+                V = unsafe { util::load_unchecked(&rhs[8 * j..]) };
+                j += 1;
+                if j < len2 {
+                    curB = rhs[8 * j];
                 } else {
                     break;
                 }
             }
-            (vecMin, vecMax) = simd_merge(V, vecMax);
-            k += store_unique(last_store, vecMin, &mut out[k..]);
-            last_store = vecMin;
+            (v_min, v_max) = simd_merge(V, v_max);
+            k += store_unique(v_prev, v_min, &mut out[k..]);
+            v_prev = v_min;
         }
-        (vecMin, vecMax) = simd_merge(V, vecMax);
-        k += store_unique(last_store, vecMin, &mut out[k..]);
-        last_store = vecMin;
+        (v_min, v_max) = simd_merge(V, v_max);
+        k += store_unique(v_prev, v_min, &mut out[k..]);
+        v_prev = v_min;
     }
     // we finish the rest off using a scalar algorithm
     // could be improved?
@@ -398,27 +398,27 @@ pub fn or_std_simd(
     // copy the small end on a tmp buffer
     let mut buffer: [u16; 16] = [0; 16];
     /// remaining size
-    let mut rem = store_unique(last_store, vecMax, &mut buffer);
-    if pos1 == len1 {
+    let mut rem = store_unique(v_prev, v_max, &mut buffer);
+    if i == len1 {
         let n = lhs.len() - 8 * len1;
-        buffer[rem..rem + n].copy_from_slice(&lhs[8 * pos1..]);
+        buffer[rem..rem + n].copy_from_slice(&lhs[8 * i..]);
         rem += n;
         buffer[..rem as usize].sort_unstable();
         rem = dedup(&mut buffer[..rem]);
         k += super::array_store::or_array_walk_mut(
             &buffer[..rem],
-            &rhs[8 * pos2..],
+            &rhs[8 * j..],
             &mut out[k..],
         );
     } else {
         let n = rhs.len() - 8 * len2;
-        buffer[rem..rem + n].copy_from_slice(&rhs[8 * pos2..]);
+        buffer[rem..rem + n].copy_from_slice(&rhs[8 * j..]);
         rem += n;
         buffer[..rem as usize].sort_unstable();
         rem = dedup(&mut buffer[..rem]);
         k += super::array_store::or_array_walk_mut(
             &buffer[..rem],
-            &lhs[8 * pos1..],
+            &lhs[8 * i..],
             &mut out[k..],
         );
     }
