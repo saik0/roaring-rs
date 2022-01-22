@@ -5,7 +5,6 @@ use retain_mut::RetainMut;
 
 use crate::bitmap::container::Container;
 use crate::bitmap::store::BitmapStore;
-use crate::bitmap::util::exponential_search_by_key;
 use crate::bitmap::Pairs;
 use crate::RoaringBitmap;
 
@@ -158,17 +157,6 @@ impl RoaringBitmap {
         BitXorAssign::bitxor_assign(self, other)
     }
 
-    /// TODO Docs
-    pub fn union_with_gallop(&mut self, rhs: &RoaringBitmap) {
-        for container in &rhs.containers {
-            let key = container.key;
-            match self.containers.binary_search_by_key(&key, |c| c.key) {
-                Err(loc) => self.containers.insert(loc, container.clone()),
-                Ok(loc) => self.containers[loc].union_gallop(container),
-            }
-        }
-    }
-
     pub fn union_with_vector(&mut self, rhs: &RoaringBitmap) {
         for container in &rhs.containers {
             let key = container.key;
@@ -224,24 +212,6 @@ impl RoaringBitmap {
         RoaringBitmap { containers }
     }
 
-    pub fn and_assign_linear(&mut self, rhs: &RoaringBitmap) {
-        let mut other = &rhs.containers[..];
-        RetainMut::retain_mut(&mut self.containers, move |cont| {
-            let key = cont.key;
-            match exponential_search_by_key(other, &key, |c| c.key) {
-                Ok(loc) => {
-                    BitAndAssign::bitand_assign(cont, &other[loc]);
-                    other = &other[loc + 1..];
-                    cont.len() != 0
-                }
-                Err(loc) => {
-                    other = &other[loc..];
-                    false
-                }
-            }
-        })
-    }
-
     pub fn and_assign_walk(&mut self, rhs: &RoaringBitmap) {
         RetainMut::retain_mut(&mut self.containers, |cont| {
             let key = cont.key;
@@ -264,37 +234,6 @@ impl RoaringBitmap {
                     cont.len() != 0
                 }
                 Err(_) => false,
-            }
-        })
-    }
-
-    pub fn and_assign_gallop(&mut self, rhs: &RoaringBitmap) {
-        RetainMut::retain_mut(&mut self.containers, |cont| {
-            let key = cont.key;
-            match rhs.containers.binary_search_by_key(&key, |c| c.key) {
-                Ok(loc) => {
-                    cont.and_assign_gallop(&rhs.containers[loc]);
-                    cont.len() != 0
-                }
-                Err(_) => false,
-            }
-        })
-    }
-
-    pub fn and_assign_opt(&mut self, rhs: &RoaringBitmap) {
-        let mut other = &rhs.containers[..];
-        RetainMut::retain_mut(&mut self.containers, move |cont| {
-            let key = cont.key;
-            match other.binary_search_by_key(&key, |c| c.key) {
-                Ok(loc) => {
-                    cont.and_assign_opt(&other[loc]);
-                    other = &other[loc + 1..];
-                    cont.len() != 0
-                }
-                Err(loc) => {
-                    other = &other[loc..];
-                    false
-                }
             }
         })
     }

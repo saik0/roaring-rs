@@ -15,49 +15,6 @@ pub fn join(high: u16, low: u16) -> u32 {
     (u32::from(high) << 16) + u32::from(low)
 }
 
-#[inline]
-pub fn exponential_search<T>(slice: &[T], elem: &T) -> Result<usize, usize>
-where
-    T: Ord,
-{
-    exponential_search_by(slice, |x| x.cmp(elem))
-}
-
-#[inline]
-pub fn exponential_search_by_key<T, B, F>(slice: &[T], b: &B, mut f: F) -> Result<usize, usize>
-where
-    F: FnMut(&T) -> B,
-    B: Ord,
-{
-    exponential_search_by(slice, |k| f(k).cmp(b))
-}
-
-pub fn exponential_search_by<T, F>(slice: &[T], mut f: F) -> Result<usize, usize>
-where
-    F: FnMut(&T) -> Ordering,
-{
-    let mut i = 1;
-    while i < slice.len() {
-        // Safety: i < slice.len() by cond of while loop
-        let cmp = f(unsafe { slice.get_unchecked(i) });
-        if cmp == Less {
-            i *= 2;
-        } else if cmp == Greater {
-            break;
-        } else {
-            return Ok(i);
-        }
-    }
-
-    let lo = i / 2;
-    let hi = std::cmp::min(i + 1, slice.len());
-
-    match slice[lo..hi].binary_search_by(f) {
-        Ok(j) => Ok(lo + j),
-        Err(j) => Err(lo + j),
-    }
-}
-
 /// Convert a `RangeBounds<u32>` object to `RangeInclusive<u32>`,
 pub fn convert_range_to_inclusive<R>(range: R) -> Option<RangeInclusive<u32>>
 where

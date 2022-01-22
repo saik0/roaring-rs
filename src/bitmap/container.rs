@@ -119,13 +119,8 @@ impl Container {
         };
     }
 
-    pub fn union_gallop(&mut self, rhs: &Container) {
-        self.store.union_gallop(&rhs.store);
-        self.ensure_correct_store();
-    }
-
     pub fn or_assign_vector(&mut self, rhs: &Container) {
-        self.store.union_vector(&rhs.store);
+        self.store.or_simd(&rhs.store);
         self.ensure_correct_store();
     }
 
@@ -157,16 +152,6 @@ impl Container {
 
     pub fn and_assign_run(&mut self, rhs: &Container) {
         self.store.and_assign_run(&rhs.store);
-        self.ensure_correct_store();
-    }
-
-    pub fn and_assign_gallop(&mut self, rhs: &Container) {
-        self.store.and_assign_gallop(&rhs.store);
-        self.ensure_correct_store();
-    }
-
-    pub fn and_assign_opt(&mut self, rhs: &Container) {
-        self.store.and_assign_opt(&rhs.store);
         self.ensure_correct_store();
     }
 

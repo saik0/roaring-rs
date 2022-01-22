@@ -1,10 +1,10 @@
+mod array;
 mod array_store;
 mod bitmap_store;
 mod op_vector;
 
 use crate::bitmap::store::array_store::{
-    and_assign_array_gallop, and_assign_array_opt, and_assign_array_opt_unsafe,
-    and_assign_array_run, and_assign_array_walk, and_assign_run, and_assign_run_unchecked,
+    and_assign_array_opt, and_assign_array_opt_unsafe, and_assign_array_run, and_assign_array_walk,
     and_assign_std_simd, and_assign_x86_simd,
 };
 use std::mem;
@@ -152,35 +152,10 @@ impl Store {
         }
     }
 
-    pub fn union_gallop(&mut self, rhs: &Store) {
+    pub fn or_simd(&mut self, rhs: &Store) {
         match (self, &rhs) {
             (&mut Array(ref mut vec1), &Array(ref vec2)) => {
-                *vec1 = ArrayStore::from_vec_unchecked(array_store::union_gallop_opt(
-                    vec1.as_slice(),
-                    vec2.as_slice(),
-                ));
-            }
-            (&mut Bitmap(ref mut bits1), &Array(ref vec2)) => {
-                BitOrAssign::bitor_assign(bits1, vec2);
-            }
-            (&mut Bitmap(ref mut bits1), &Bitmap(ref bits2)) => {
-                BitOrAssign::bitor_assign(bits1, bits2);
-            }
-            (this @ &mut Array(..), &Bitmap(ref bits2)) => {
-                let mut lhs: Store = Bitmap(bits2.clone());
-                BitOrAssign::bitor_assign(&mut lhs, &*this);
-                *this = lhs;
-            }
-        }
-    }
-
-    pub fn union_vector(&mut self, rhs: &Store) {
-        match (self, &rhs) {
-            (&mut Array(ref mut vec1), &Array(ref vec2)) => {
-                *vec1 = ArrayStore::from_vec_unchecked(op_vector::or_x86_simd(
-                    vec1.as_slice(),
-                    vec2.as_slice(),
-                ));
+                *vec1 = array_store::or_simd(vec1, vec2);
             }
             (&mut Bitmap(ref mut bits1), &Array(ref vec2)) => {
                 BitOrAssign::bitor_assign(bits1, vec2);
@@ -198,9 +173,7 @@ impl Store {
 
     pub fn and_x86_simd(&self, rhs: &Store) -> Store {
         match (self, rhs) {
-            (&Array(ref vec1), &Array(ref vec2)) => Array(ArrayStore::from_vec_unchecked(
-                op_vector::and_x86_simd(vec1.as_slice(), vec2.as_slice()),
-            )),
+            (&Array(ref vec1), &Array(ref vec2)) => Array(array_store::and_x86_simd(vec1, vec2)),
             (&Bitmap(..), &Array(..)) => {
                 let mut rhs = rhs.clone();
                 BitAndAssign::bitand_assign(&mut rhs, self);
@@ -216,9 +189,7 @@ impl Store {
 
     pub fn and_std_simd(&self, rhs: &Store) -> Store {
         match (self, rhs) {
-            (&Array(ref vec1), &Array(ref vec2)) => Array(ArrayStore::from_vec_unchecked(
-                op_vector::and_std_simd(vec1.as_slice(), vec2.as_slice()),
-            )),
+            (&Array(ref vec1), &Array(ref vec2)) => Array(array_store::and_std_simd(vec1, vec2)),
             (&Bitmap(..), &Array(..)) => {
                 let mut rhs = rhs.clone();
                 BitAndAssign::bitand_assign(&mut rhs, self);
@@ -275,25 +246,6 @@ impl Store {
         match (self, rhs) {
             (&mut Array(ref mut vec1), &Array(ref vec2)) => {
                 and_assign_array_run(vec1, vec2);
-            }
-            (&mut Bitmap(ref mut bits1), &Bitmap(ref bits2)) => {
-                BitAndAssign::bitand_assign(bits1, bits2);
-            }
-            (&mut Array(ref mut vec1), &Bitmap(ref bits2)) => {
-                BitAndAssign::bitand_assign(vec1, bits2);
-            }
-            (this @ &mut Bitmap(..), &Array(..)) => {
-                let mut new = rhs.clone();
-                BitAndAssign::bitand_assign(&mut new, &*this);
-                *this = new;
-            }
-        }
-    }
-
-    pub fn and_assign_gallop(&mut self, rhs: &Store) {
-        match (self, rhs) {
-            (&mut Array(ref mut vec1), &Array(ref vec2)) => {
-                and_assign_array_gallop(vec1, vec2);
             }
             (&mut Bitmap(ref mut bits1), &Bitmap(ref bits2)) => {
                 BitAndAssign::bitand_assign(bits1, bits2);
