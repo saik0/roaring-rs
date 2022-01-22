@@ -129,8 +129,15 @@ impl Container {
         self.ensure_correct_store();
     }
 
-    pub fn and_vector(&self, rhs: &Container) -> Container {
-        let store = self.store.and_vector(&rhs.store);
+    pub fn and_x86_simd(&self, rhs: &Container) -> Container {
+        let store = self.store.and_x86_simd(&rhs.store);
+        let mut container = Container { key: self.key, store };
+        container.ensure_correct_store();
+        container
+    }
+
+    pub fn and_std_simd(&self, rhs: &Container) -> Container {
+        let store = self.store.and_std_simd(&rhs.store);
         let mut container = Container { key: self.key, store };
         container.ensure_correct_store();
         container
@@ -168,8 +175,13 @@ impl Container {
         self.ensure_correct_store();
     }
 
-    pub fn and_assign_vector(&mut self, rhs: &Container) {
-        self.store.and_assign_vector(&rhs.store);
+    pub fn and_assign_x86_simd(&mut self, rhs: &Container) {
+        self.store.and_assign_x86_simd(&rhs.store);
+        self.ensure_correct_store();
+    }
+
+    pub fn and_assign_std_simd(&mut self, rhs: &Container) {
+        self.store.and_assign_std_simd(&rhs.store);
         self.ensure_correct_store();
     }
 }

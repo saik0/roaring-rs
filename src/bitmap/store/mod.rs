@@ -7,7 +7,7 @@ use std::ops::{
     BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, RangeInclusive, Sub, SubAssign,
 };
 use std::{slice, vec};
-use crate::bitmap::store::array_store::{and_assign_array_walk, and_assign_array_gallop, and_assign_array_opt, and_assign_array_opt_unsafe, and_assign_run_unchecked, and_assign_run, and_assign_array_run, and_assign_array_vector};
+use crate::bitmap::store::array_store::{and_assign_array_walk, and_assign_array_gallop, and_assign_array_opt, and_assign_array_opt_unsafe, and_assign_run_unchecked, and_assign_run, and_assign_array_run, and_assign_x86_simd, and_assign_std_simd};
 
 use self::bitmap_store::BITMAP_LENGTH;
 use self::Store::{Array, Bitmap};
@@ -192,10 +192,28 @@ impl Store {
         }
     }
 
-    pub fn and_vector(&self, rhs: &Store) -> Store {
+    pub fn and_x86_simd(&self, rhs: &Store) -> Store {
         match (self, rhs) {
             (&Array(ref vec1), &Array(ref vec2)) => Array(ArrayStore::from_vec_unchecked(
-                op_vector::intersect_vector(vec1.as_slice(), vec2.as_slice())
+                op_vector::and_x86_simd(vec1.as_slice(), vec2.as_slice())
+            )),
+            (&Bitmap(..), &Array(..)) => {
+                let mut rhs = rhs.clone();
+                BitAndAssign::bitand_assign(&mut rhs, self);
+                rhs
+            }
+            _ => {
+                let mut lhs = self.clone();
+                BitAndAssign::bitand_assign(&mut lhs, rhs);
+                lhs
+            }
+        }
+    }
+
+    pub fn and_std_simd(&self, rhs: &Store) -> Store {
+        match (self, rhs) {
+            (&Array(ref vec1), &Array(ref vec2)) => Array(ArrayStore::from_vec_unchecked(
+                op_vector::and_std_simd(vec1.as_slice(), vec2.as_slice())
             )),
             (&Bitmap(..), &Array(..)) => {
                 let mut rhs = rhs.clone();
@@ -325,10 +343,29 @@ impl Store {
         }
     }
 
-    pub fn and_assign_vector(&mut self, rhs: &Store) {
+    pub fn and_assign_x86_simd(&mut self, rhs: &Store) {
         match (self, rhs) {
             (&mut Array(ref mut vec1), &Array(ref vec2)) => {
-                and_assign_array_vector(vec1, vec2);
+                and_assign_x86_simd(vec1, vec2);
+            }
+            (&mut Bitmap(ref mut bits1), &Bitmap(ref bits2)) => {
+                BitAndAssign::bitand_assign(bits1, bits2);
+            }
+            (&mut Array(ref mut vec1), &Bitmap(ref bits2)) => {
+                BitAndAssign::bitand_assign(vec1, bits2);
+            }
+            (this @ &mut Bitmap(..), &Array(..)) => {
+                let mut new = rhs.clone();
+                BitAndAssign::bitand_assign(&mut new, &*this);
+                *this = new;
+            }
+        }
+    }
+
+    pub fn and_assign_std_simd(&mut self, rhs: &Store) {
+        match (self, rhs) {
+            (&mut Array(ref mut vec1), &Array(ref vec2)) => {
+                and_assign_std_simd(vec1, vec2);
             }
             (&mut Bitmap(ref mut bits1), &Bitmap(ref bits2)) => {
                 BitAndAssign::bitand_assign(bits1, bits2);

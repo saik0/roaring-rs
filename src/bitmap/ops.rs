@@ -180,12 +180,27 @@ impl RoaringBitmap {
     }
 
 
-    pub fn and_vector(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
+    pub fn and_x86_simd(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
         let mut containers = Vec::new();
 
         for pair in Pairs::new(&self.containers, &rhs.containers) {
             if let (Some(lhs), Some(rhs)) = pair {
-                let container = lhs.and_vector(rhs);
+                let container = lhs.and_x86_simd(rhs);
+                if container.len() != 0 {
+                    containers.push(container);
+                }
+            }
+        }
+
+        RoaringBitmap { containers }
+    }
+
+    pub fn and_std_simd(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
+        let mut containers = Vec::new();
+
+        for pair in Pairs::new(&self.containers, &rhs.containers) {
+            if let (Some(lhs), Some(rhs)) = pair {
+                let container = lhs.and_std_simd(rhs);
                 if container.len() != 0 {
                     containers.push(container);
                 }
@@ -298,12 +313,25 @@ impl RoaringBitmap {
         })
     }
 
-    pub fn and_assign_vector(&mut self, rhs: &RoaringBitmap) {
+    pub fn and_assign_x86_simd(&mut self, rhs: &RoaringBitmap) {
         RetainMut::retain_mut(&mut self.containers, |cont| {
             let key = cont.key;
             match rhs.containers.binary_search_by_key(&key, |c| c.key) {
                 Ok(loc) => {
-                    cont.and_assign_vector(&rhs.containers[loc]);
+                    cont.and_assign_x86_simd(&rhs.containers[loc]);
+                    cont.len() != 0
+                }
+                Err(_) => false,
+            }
+        })
+    }
+
+    pub fn and_assign_std_simd(&mut self, rhs: &RoaringBitmap) {
+        RetainMut::retain_mut(&mut self.containers, |cont| {
+            let key = cont.key;
+            match rhs.containers.binary_search_by_key(&key, |c| c.key) {
+                Ok(loc) => {
+                    cont.and_assign_std_simd(&rhs.containers[loc]);
                     cont.len() != 0
                 }
                 Err(_) => false,

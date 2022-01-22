@@ -282,53 +282,77 @@ fn and2(c: &mut Criterion) {
             })
             .collect();
 
-    // let mut group = c.benchmark_group(format!("pairwise_and"));
-    //
-    // for (filename, bitmaps) in PARSED_DATASET_BITMAPS.iter() {
-    //     // Number of bits
-    //
-    //     group.bench_function(BenchmarkId::new(*filename, "cur".to_string()), |b| {
-    //         b.iter_batched(
-    //             || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
-    //             |bitmaps| {
-    //                 for (a, b) in bitmaps {
-    //                     black_box(a & &b);
-    //                 }
-    //             },
-    //             BatchSize::SmallInput,
-    //         );
-    //     });
-    //
-    //     group.bench_function(BenchmarkId::new(*filename, "opt_unsafe".to_string()), |b| {
-    //         b.iter_batched(
-    //             || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
-    //             |bitmaps| {
-    //                 for (a, b) in bitmaps {
-    //                     black_box(a.and_vector(&b));
-    //                 }
-    //             },
-    //             BatchSize::SmallInput,
-    //         );
-    //     });
-    // }
-    //
-    // for (filename, bitmaps) in c_arrays.iter() {
-    //     // Number of bits
-    //
-    //     group.bench_function(BenchmarkId::new(*filename, "c".to_string()), |b| {
-    //         b.iter_batched(
-    //             || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
-    //             |bitmaps| {
-    //                 for (a, b) in bitmaps {
-    //                     black_box(a.and(&b));
-    //                 }
-    //             },
-    //             BatchSize::SmallInput,
-    //         );
-    //     });
-    // }
-    //
-    // group.finish();
+    let mut group = c.benchmark_group(format!("pairwise_and"));
+
+    for (filename, bitmaps) in PARSED_DATASET_ARRAYS.iter() {
+        // Number of bits
+
+        group.bench_function(BenchmarkId::new(*filename, "cur".to_string()), |b| {
+            b.iter_batched(
+                || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+                |bitmaps| {
+                    for (a, b) in bitmaps {
+                        black_box(a & &b);
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_function(BenchmarkId::new(*filename, "opt_unsafe".to_string()), |b| {
+            b.iter_batched(
+                || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+                |bitmaps| {
+                    for (a, b) in bitmaps {
+                        black_box(a.and_opt_unsafe(&b));
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_function(BenchmarkId::new(*filename, "x86_simd".to_string()), |b| {
+            b.iter_batched(
+                || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+                |bitmaps| {
+                    for (a, b) in bitmaps {
+                        black_box(a.and_x86_simd(&b));
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_function(BenchmarkId::new(*filename, "std_simd".to_string()), |b| {
+            b.iter_batched(
+                || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+                |bitmaps| {
+                    for (a, b) in bitmaps {
+                        black_box(a.and_std_simd(&b));
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+
+    for (filename, bitmaps) in c_arrays.iter() {
+        // Number of bits
+
+        group.bench_function(BenchmarkId::new(*filename, "c".to_string()), |b| {
+            b.iter_batched(
+                || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+                |bitmaps| {
+                    for (a, b) in bitmaps {
+                        black_box(a.and(&b));
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+
+    group.finish();
 
     let mut group = c.benchmark_group(format!("pairwise_and_assign"));
 
@@ -420,12 +444,24 @@ fn and2(c: &mut Criterion) {
             );
         });
 
-        group.bench_function(BenchmarkId::new(*filename, "simd".to_string()), |b| {
+        group.bench_function(BenchmarkId::new(*filename, "x86_simd".to_string()), |b| {
             b.iter_batched(
                 || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
                 |bitmaps| {
                     for (mut a, b) in bitmaps {
-                        a.and_assign_vector(&b);
+                        a.and_assign_x86_simd(&b);
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_function(BenchmarkId::new(*filename, "std_simd".to_string()), |b| {
+            b.iter_batched(
+                || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+                |bitmaps| {
+                    for (mut a, b) in bitmaps {
+                        a.and_assign_std_simd(&b);
                     }
                 },
                 BatchSize::SmallInput,

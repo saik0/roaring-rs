@@ -10,7 +10,7 @@ use std::ops::{BitAnd, BitAndAssign, BitOr, BitXor, BitXorAssign, RangeInclusive
 use std::ptr::slice_from_raw_parts_mut;
 use std::cell::{Cell, RefCell};
 use std::pin::Pin;
-use crate::bitmap::store::op_vector::{intersect_assign_vector, intersect_vector};
+use crate::bitmap::store::op_vector;
 
 use super::bitmap_store::{bit, key, BitmapStore, BITMAP_LENGTH};
 
@@ -294,13 +294,15 @@ impl BitAnd<Self> for &ArrayStore {
     type Output = ArrayStore;
 
     fn bitand(self, rhs: Self) -> Self::Output {
-        and_array_array(self, rhs)
+        //and_array_array(self, rhs)
+        and_std_simd(self, rhs)
     }
 }
 
 impl BitAndAssign<&Self> for ArrayStore {
     fn bitand_assign(&mut self, rhs: &Self) {
-        and_assign_array_array(self, rhs);
+        //and_assign_array_array(self, rhs);
+        and_assign_std_simd(self, rhs);
     }
 }
 
@@ -375,25 +377,41 @@ pub fn and_assign_array_opt_unsafe(lhs: &mut ArrayStore, rhs: & ArrayStore) {
     and_assign_opt_unchecked(&mut lhs.vec, rhs.vec.as_slice())
 }
 
-pub fn and_assign_array_vector(lhs: &mut ArrayStore, rhs: & ArrayStore) {
-    // unsafe { and_assign_opt_unsafe(&mut lhs.vec, rhs.vec.as_slice()) }
+pub fn and_x86_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
+    let mut x = lhs.clone();
+    and_assign_x86_simd(&mut x, rhs);
+    x
+}
+
+pub fn and_assign_x86_simd(lhs: &mut ArrayStore, rhs: & ArrayStore) {
     const THRESHOLD: usize = 64;
     if lhs.vec.len() * THRESHOLD < rhs.vec.len() {
         intersect_skewed_small_unchecked(&mut lhs.vec, rhs.as_slice());
     } else if rhs.vec.len() * THRESHOLD < lhs.vec.len() {
         intersect_skewed_large_unchecked(rhs.as_slice(), &mut lhs.vec);
     } else {
-        THREAD_LOCAL_ARRAY.with(|cell| {
-            // intersect_assign_vector must reserve sufficient capacity within it's body
-            // however, if a new vec does need to be allocated, ensure it's already large enough
-            let mut buf = match cell.replace(None) {
-                None => { Vec::with_capacity(lhs.vec.len().min(rhs.vec.len())) }
-                Some(vec) => { vec }
-            };
-            intersect_assign_vector(lhs.as_slice(), rhs.as_slice(), &mut buf);
-            std::mem::swap(&mut lhs.vec, &mut buf);
-            cell.set(Some(buf));
-        })
+        let mut buf = Vec::with_capacity(lhs.vec.len().min(rhs.vec.len()));
+        op_vector::intersect_assign_vector_x86(lhs.as_slice(), rhs.as_slice(), &mut buf);
+        std::mem::swap(&mut lhs.vec, &mut buf);
+    }
+}
+
+pub fn and_std_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
+    let mut x = lhs.clone();
+    and_assign_std_simd(&mut x, rhs);
+    x
+}
+
+pub fn and_assign_std_simd(lhs: &mut ArrayStore, rhs: & ArrayStore) {
+    const THRESHOLD: usize = 64;
+    if lhs.vec.len() * THRESHOLD < rhs.vec.len() {
+        intersect_skewed_small_unchecked(&mut lhs.vec, rhs.as_slice());
+    } else if rhs.vec.len() * THRESHOLD < lhs.vec.len() {
+        intersect_skewed_large_unchecked(rhs.as_slice(), &mut lhs.vec);
+    } else {
+        let mut buf = Vec::with_capacity(lhs.vec.len().min(rhs.vec.len()));
+        op_vector::intersect_assign_vector_std(lhs.as_slice(), rhs.as_slice(), &mut buf);
+        std::mem::swap(&mut lhs.vec, &mut buf);
     }
 }
 
@@ -458,12 +476,17 @@ pub fn and_assign_run(lhs: &mut Vec<u16>, rhs: &[u16]) {
 }
 
 /// This is called 'run' because of the two inner while loops
-// If they were 'if'
 #[inline]
 pub fn and_assign_run_unchecked(lhs: &mut Vec<u16>, rhs: &[u16]) {
     if lhs.is_empty() || rhs.is_empty() {
         lhs.clear();
         return;
+    }
+
+    // TODO safer to zero fill, then truncate?
+    let max_len = lhs.len().max(rhs.len());
+    if max_len > lhs.len() {
+        lhs.reserve(max_len - lhs.len())
     }
 
     let mut i = 0;
@@ -488,9 +511,8 @@ pub fn and_assign_run_unchecked(lhs: &mut Vec<u16>, rhs: &[u16]) {
                 if i == lhs.len() || j == rhs.len() { break 'outer }
             }
         }
+        lhs.set_len(k);
     }
-
-    lhs.truncate(k);
 }
 
 fn and_assign_gallop(lhs: &mut Vec<u16>, rhs: &[u16]) {
