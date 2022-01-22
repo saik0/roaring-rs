@@ -390,7 +390,7 @@ pub fn and_assign_x86_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
         intersect_skewed_large_unchecked(rhs.as_slice(), &mut lhs.vec);
     } else {
         let mut buf = Vec::with_capacity(lhs.vec.len().min(rhs.vec.len()));
-        op_vector::intersect_assign_vector_x86(lhs.as_slice(), rhs.as_slice(), &mut buf);
+        op_vector::and_assign_x86_simd(lhs.as_slice(), rhs.as_slice(), &mut buf);
         std::mem::swap(&mut lhs.vec, &mut buf);
     }
 }
@@ -408,9 +408,8 @@ pub fn and_assign_std_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
     } else if rhs.vec.len() * THRESHOLD < lhs.vec.len() {
         intersect_skewed_large_unchecked(rhs.as_slice(), &mut lhs.vec);
     } else {
-        let mut buf = Vec::with_capacity(lhs.vec.len().min(rhs.vec.len()));
-        op_vector::intersect_assign_vector_std(lhs.as_slice(), rhs.as_slice(), &mut buf);
-        std::mem::swap(&mut lhs.vec, &mut buf);
+        let mut vec = op_vector::and_std_simd(lhs.as_slice(), rhs.as_slice());
+        std::mem::swap(&mut lhs.vec, &mut vec);
     }
 }
 

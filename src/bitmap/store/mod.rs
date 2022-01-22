@@ -177,7 +177,7 @@ impl Store {
     pub fn union_vector(&mut self, rhs: &Store) {
         match (self, &rhs) {
             (&mut Array(ref mut vec1), &Array(ref vec2)) => {
-                *vec1 = ArrayStore::from_vec_unchecked(op_vector::union_vector(
+                *vec1 = ArrayStore::from_vec_unchecked(op_vector::or_x86_simd(
                     vec1.as_slice(),
                     vec2.as_slice(),
                 ));

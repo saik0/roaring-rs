@@ -1,13 +1,6 @@
-use itertools::min;
-use std::arch::x86_64::{
-    __m128i, _mm_alignr_epi8, _mm_cmpeq_epi16, _mm_cmpestrm, _mm_cmpistrm, _mm_extract_epi32,
-    _mm_lddqu_si128, _mm_loadu_si128, _mm_max_epu16, _mm_min_epu16, _mm_movemask_epi8,
-    _mm_packs_epi16, _mm_set1_epi16, _mm_setzero_si128, _mm_shuffle_epi8, _mm_storeu_si128,
-    _popcnt32, _SIDD_BIT_MASK, _SIDD_CMP_EQUAL_ANY, _SIDD_UWORD_OPS,
-};
 use std::cell::RefMut;
 use std::mem;
-use std::ptr::{copy_nonoverlapping, slice_from_raw_parts, slice_from_raw_parts_mut};
+use std::ptr::copy_nonoverlapping;
 use std::simd::{
     i8x16, mask16x4, mask16x8, u16x16, u16x4, u16x8, u8x16, usizex8, LaneCount, Mask, Simd,
     SimdElement, SupportedLaneCount, Swizzle2, Which,
@@ -18,37 +11,37 @@ use std::simd::{
 /// functions that are generally useful, but not part of std
 mod util {
     use std::mem;
-    use std::simd::{mask16x8, LaneCount, Simd, SimdElement, SupportedLaneCount};
+    use std::simd::{mask16x8, LaneCount, Simd, SimdElement, SupportedLaneCount, u16x8};
 
     /// compute the min for each lane in `a` and `b`
     #[inline]
     pub fn lanes_min<U, const LANES: usize>(
-        lhs: &Simd<U, LANES>,
-        rhs: &Simd<U, LANES>,
+        lhs: Simd<U, LANES>,
+        rhs: Simd<U, LANES>,
     ) -> Simd<U, LANES>
     where
         U: SimdElement + PartialOrd,
         LaneCount<LANES>: SupportedLaneCount,
     {
-        lhs.lanes_le(*rhs).select(*lhs, *rhs)
+        lhs.lanes_le(rhs).select(lhs, rhs)
     }
 
     /// compute the max for each lane in `a` and `b`
     #[inline]
     pub fn lanes_max<U, const LANES: usize>(
-        lhs: &Simd<U, LANES>,
-        rhs: &Simd<U, LANES>,
+        lhs: Simd<U, LANES>,
+        rhs: Simd<U, LANES>,
     ) -> Simd<U, LANES>
     where
         U: SimdElement + PartialOrd,
         LaneCount<LANES>: SupportedLaneCount,
     {
-        lhs.lanes_gt(*rhs).select(*lhs, *rhs)
+        lhs.lanes_gt(rhs).select(lhs, rhs)
     }
 
     /// write `v` to slice `out`
     #[inline]
-    pub fn store<U, const LANES: usize>(v: &Simd<U, LANES>, out: &mut [U])
+    pub fn store<U, const LANES: usize>(v: Simd<U, LANES>, out: &mut [U])
     where
         U: SimdElement + PartialOrd,
         LaneCount<LANES>: SupportedLaneCount,
@@ -61,12 +54,25 @@ mod util {
     /// ### Safety
     ///   - The caller must ensure `LANES` does not exceed the allocation for `out`
     #[inline]
-    pub unsafe fn store_unchecked<U, const LANES: usize>(v: &Simd<U, LANES>, out: &mut [U])
+    pub unsafe fn store_unchecked<U, const LANES: usize>(v: Simd<U, LANES>, out: &mut [U])
     where
         U: SimdElement + PartialOrd,
         LaneCount<LANES>: SupportedLaneCount,
     {
-        unsafe { std::ptr::write_unaligned(out as *mut _ as *mut Simd<U, LANES>, *v) }
+        unsafe { std::ptr::write_unaligned(out as *mut _ as *mut Simd<U, LANES>, v) }
+    }
+
+    /// write `v` to slice `out` without checking bounds
+    ///
+    /// ### Safety
+    ///   - The caller must ensure `LANES` does not exceed the allocation for `out`
+    #[inline]
+    pub unsafe fn load_unchecked<U, const LANES: usize>(src: &[U]) -> Simd<U, LANES>
+        where
+            U: SimdElement + PartialOrd,
+            LaneCount<LANES>: SupportedLaneCount,
+    {
+        unsafe { std::ptr::read_unaligned(src as *const _ as *const Simd<U, LANES>) }
     }
 }
 
@@ -80,14 +86,14 @@ mod shim {
 
     #[allow(unreachable_code)]
     #[inline]
-    pub fn swizzle_bytes(a: &u8x16, b: &u8x16) -> u8x16 {
+    pub fn swizzle_bytes(a: u8x16, b: u8x16) -> u8x16 {
         #[cfg(target_feature = "ssse3")]
         unsafe {
             #[cfg(target_arch = "x86")]
             use std::arch::x86::_mm_shuffle_epi8;
             #[cfg(target_arch = "x86_64")]
             use std::arch::x86_64::_mm_shuffle_epi8;
-            return _mm_shuffle_epi8(mem::transmute(*a), mem::transmute(*b)).into();
+            return _mm_shuffle_epi8(a.into(), b.into()).into();
         }
 
         // TODO neon
@@ -100,39 +106,41 @@ mod shim {
             use std::arch::wasm32::u8x16_swizzle;
             #[cfg(target_arch = "wasm64")]
             use std::arch::wasm64::u8x16_swizzle;
-            return mem::transmute(u8x16_swizzle(mem::transmute(*a), mem::transmute(*b)));
+            return mem::transmute(u8x16_swizzle(mem::transmute(a), mem::transmute(b)));
         }
 
         // fallback scalar shuffle
         let (a, b) = unsafe {
             (
-                mem::transmute::<u8x16, i8x16>(*a).to_array(),
-                mem::transmute::<u8x16, i8x16>(*b).to_array(),
+                mem::transmute::<u8x16, u8x16>(a).to_array(),
+                mem::transmute::<u8x16, u8x16>(b).to_array(),
             )
         };
         let mut r = [0; 16];
-        for i in 0usize..16 {
-            r[i] = if b[i] < 0 { 0 } else { a[b[i] as usize % 16] };
+        for i in 0..16 {
+            if b[i] & 0x80 == 0u8 {
+                r[i] = a[(b[i] % 16) as usize];
+            }
         }
-        let res: i8x16 = Simd::from_array(r);
+        let res: u8x16 = Simd::from_array(r);
         unsafe { mem::transmute(res) }
     }
 
     #[inline]
-    pub fn swizzle_u16x8(a: &u16x8, b: &u16x8) -> u16x8 {
-        unsafe { mem::transmute(swizzle_bytes(&mem::transmute(*a), &mem::transmute(*b))) }
+    pub fn swizzle_u16x8(a: u16x8, b: u16x8) -> u16x8 {
+        unsafe { mem::transmute(swizzle_bytes(mem::transmute(a), mem::transmute(b))) }
     }
 
     #[allow(unreachable_code)]
     #[inline]
-    pub fn to_bitmask(mask: &mask16x8) -> usize {
+    pub fn to_bitmask(mask: mask16x8) -> usize {
         #[cfg(target_feature = "sse2")]
         unsafe {
             #[cfg(target_arch = "x86")]
             use std::arch::x86::{_mm_movemask_epi8, _mm_packs_epi16, _mm_setzero_si128};
             #[cfg(target_arch = "x86_64")]
             use std::arch::x86_64::{_mm_movemask_epi8, _mm_packs_epi16, _mm_setzero_si128};
-            return _mm_movemask_epi8(_mm_packs_epi16(mem::transmute(*mask), _mm_setzero_si128()))
+            return _mm_movemask_epi8(_mm_packs_epi16(mem::transmute(mask), _mm_setzero_si128()))
                 as usize;
         }
 
@@ -148,7 +156,7 @@ mod shim {
             use std::arch::wasm32::i16x8_bitmask;
             #[cfg(target_arch = "wasm64")]
             use std::arch::wasm64::i16x8_bitmask;
-            return i16x8_bitmask(mem::transmute(*mask)) as usize;
+            return i16x8_bitmask(mem::transmute(mask)) as usize;
         }
 
         // fallback to scalar bitmask
@@ -161,8 +169,144 @@ mod shim {
     }
 }
 
+// Set operation specific helpers
+
+/// Compare all lanes in `a` to all lanes in `b`
+///
+/// A bit in the result mask will be set if any lane at `a[i]` is in any lane of `b`
+///
+/// ### Example
+/// ```ignore
+/// let a = Simd::from_array([1, 2, 3, 4, 32, 33, 34, 35]);
+/// let b = Simd::from_array([2, 4, 6, 8, 10, 12, 14, 16]);
+/// let result = cmp_all_all(a, b);
+/// assert_eq!(result, 0b00001010);
+/// ```
 #[inline]
-pub fn union_vector(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
+fn cmp_all_all(a: u16x8, b: u16x8) -> usize {
+    let mut res = a.lanes_eq(b);
+    res |= a.lanes_eq(b.rotate_lanes_left::<1>());
+    res |= a.lanes_eq(b.rotate_lanes_left::<2>());
+    res |= a.lanes_eq(b.rotate_lanes_left::<3>());
+    res |= a.lanes_eq(b.rotate_lanes_left::<4>());
+    res |= a.lanes_eq(b.rotate_lanes_left::<5>());
+    res |= a.lanes_eq(b.rotate_lanes_left::<6>());
+    res |= a.lanes_eq(b.rotate_lanes_left::<7>());
+    shim::to_bitmask(res)
+}
+
+// From Schlegel et al., Fast Sorted-Set Intersection using SIMD Instructions
+//
+// Impl note:
+// The x86 PCMPESTRM used in the paper has been replaced with a SIMD or-shift
+// While several more instructions, it is portable to many SIMD ISAs
+// Benchmarked on my hardware: the runtime was within 1 std dev of D. Lemire's impl in CRoaring
+#[allow(non_snake_case)]
+pub fn and_std_simd(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
+    const VEC_LEN: usize = mem::size_of::<u16x8>() / mem::size_of::<u16>();
+
+    let st_a = (lhs.len() / VEC_LEN) * VEC_LEN;
+    let st_b = (rhs.len() / VEC_LEN) * VEC_LEN;
+
+    let mut out = vec![0; lhs.len().max(rhs.len())];
+
+    let mut i: usize = 0;
+    let mut j: usize = 0;
+    let mut k: usize = 0;
+    if (i < st_a) && (j < st_b) {
+        // Safety:
+        //  * Unchecked loads fom lhs[i..] and rhs[j..] are safe given i < st_a && j < st_b
+        let mut v_a: u16x8 = unsafe { util::load_unchecked(&lhs[i..]) };
+        let mut v_b: u16x8 = unsafe { util::load_unchecked(&rhs[j..]) };
+        loop {
+            let r = cmp_all_all(v_a, v_b);
+
+            // Safety:
+            //  * r is guaranteed to be 1 byte at most.
+            //    256 * 16 == 4096, which is the len of SHUFFLE_MASK
+            let key: u8x16 = unsafe { util::load_unchecked(&SHUFFLE_MASK[r * 16..]) };
+
+            // Safety:
+            //  * These types are the same size.
+            //  * TODO replace with cast once it's in nightly
+            let key: u16x8 = unsafe { mem::transmute(key) };
+            let intersection: u16x8 = shim::swizzle_u16x8(v_a, key);
+
+            // Safety:
+            //  * Unchecked store to out[k..] k is always <= i or j
+            unsafe { util::store_unchecked(intersection, &mut out[k..]) };
+            k += r.count_ones() as usize;
+
+            // Safety:
+            //  * Must be in bounds given i < st_a && j < st_b checks
+            let a_max: u16 = unsafe { *lhs.get_unchecked(i + VEC_LEN - 1) };
+            let b_max: u16 = unsafe { *rhs.get_unchecked(j + VEC_LEN - 1) };
+            if a_max <= b_max {
+                i += VEC_LEN;
+                if i == st_a {
+                    break;
+                }
+                // Safety:
+                //  * Unchecked loads fom lhs[i..] is save given i != st_a
+                v_a = unsafe { util::load_unchecked(&lhs[i..]) };
+            }
+            if b_max <= a_max {
+                j += VEC_LEN;
+                if j == st_b {
+                    break;
+                }
+                // Safety:
+                //  * Unchecked loads fom rhs[j..] is save given j != st_b
+                v_b = unsafe { util::load_unchecked(&rhs[j..]) };
+            }
+        }
+    }
+
+    // intersect the tail using scalar intersection
+    // TODO finish up by calling normal scalar walk/run fn instead this inlined walk?
+    // Safety:
+    //  * Unchecked indexing safe given the condition of the loop
+    while i < lhs.len() && j < rhs.len() {
+        let a: u16 = unsafe { *lhs.get_unchecked(i) };
+        let b: u16 = unsafe { *rhs.get_unchecked(j) };
+        if a < b {
+            i += 1;
+        } else if b < a {
+            j += 1;
+        } else {
+            *unsafe { out.get_unchecked_mut(k) } = a; //==b;
+            k += 1;
+            i += 1;
+            j += 1;
+        }
+    }
+
+    out.truncate(k);
+    out
+}
+
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██╗░░██╗░█████╗░░█████╗░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░╚██╗██╔╝██╔══██╗██╔═══╝░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░╚███╔╝░╚█████╔╝██████╗░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██╔██╗░██╔══██╗██╔══██╗░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██╔╝╚██╗╚█████╔╝╚█████╔╝░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░╚═╝░░╚═╝░╚════╝░░╚════╝░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//
+// x86 SIMD included for comparing benchmarks
+
+use std::arch::x86_64::{
+    __m128i, _mm_alignr_epi8, _mm_cmpeq_epi16, _mm_cmpestrm, _mm_cmpistrm, _mm_extract_epi32,
+    _mm_lddqu_si128, _mm_loadu_si128, _mm_max_epu16, _mm_min_epu16, _mm_movemask_epi8,
+    _mm_packs_epi16, _mm_set1_epi16, _mm_setzero_si128, _mm_shuffle_epi8, _mm_storeu_si128,
+    _popcnt32, _SIDD_BIT_MASK, _SIDD_CMP_EQUAL_ANY, _SIDD_UWORD_OPS,
+};
+
+// Safe entry points
+
+#[inline]
+pub fn or_x86_simd(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     let mut vec = Vec::with_capacity(lhs.len() + rhs.len());
     unsafe {
         let len =
@@ -171,8 +315,6 @@ pub fn union_vector(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     }
     vec
 }
-
-// Safe abstraction entrypoints
 
 #[inline]
 pub fn and_x86_simd(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
@@ -191,23 +333,7 @@ pub fn and_x86_simd(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
 }
 
 #[inline]
-pub fn and_std_simd(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
-    let mut vec = Vec::with_capacity(lhs.len().max(rhs.len()));
-    unsafe {
-        let len = intersect_vector16_std(
-            lhs.as_ptr(),
-            lhs.len(),
-            rhs.as_ptr(),
-            rhs.len(),
-            vec.as_mut_ptr(),
-        );
-        vec.set_len(len);
-    }
-    vec
-}
-
-#[inline]
-pub fn intersect_assign_vector_x86(lhs: &[u16], rhs: &[u16], buf: &mut Vec<u16>) {
+pub fn and_assign_x86_simd(lhs: &[u16], rhs: &[u16], buf: &mut Vec<u16>) {
     let min_capacity = lhs.len().max(rhs.len());
     if min_capacity > buf.len() {
         buf.reserve(min_capacity - buf.len())
@@ -224,119 +350,7 @@ pub fn intersect_assign_vector_x86(lhs: &[u16], rhs: &[u16], buf: &mut Vec<u16>)
     }
 }
 
-#[inline]
-pub fn intersect_assign_vector_std(lhs: &[u16], rhs: &[u16], buf: &mut Vec<u16>) {
-    let min_capacity = lhs.len().max(rhs.len());
-    if min_capacity > buf.len() {
-        buf.reserve(min_capacity - buf.len())
-    }
-    unsafe {
-        let len = intersect_vector16_std(
-            lhs.as_ptr(),
-            lhs.len(),
-            rhs.as_ptr(),
-            rhs.len(),
-            buf.as_mut_ptr(),
-        );
-        buf.set_len(len);
-    }
-}
-
-// Set operation specific helpers
-
-#[inline]
-fn cmp_all_all(a: &u16x8, b: &u16x8) -> i32 {
-    let mut res = a.lanes_eq(*b);
-    res |= a.lanes_eq(b.rotate_lanes_left::<1>());
-    res |= a.lanes_eq(b.rotate_lanes_left::<2>());
-    res |= a.lanes_eq(b.rotate_lanes_left::<3>());
-    res |= a.lanes_eq(b.rotate_lanes_left::<4>());
-    res |= a.lanes_eq(b.rotate_lanes_left::<5>());
-    res |= a.lanes_eq(b.rotate_lanes_left::<6>());
-    res |= a.lanes_eq(b.rotate_lanes_left::<7>());
-    shim::to_bitmask(&res) as i32
-}
-
-// Backwards shims (used to verify helpers in development without porting op algs)
-unsafe fn cmpistrm_shim(a: *const __m128i, b: *const __m128i) -> i32 {
-    unsafe {
-        let a: &u16x8 = &*(a.cast::<u16x8>());
-        let b: &u16x8 = &*(b.cast::<u16x8>());
-        let res = cmp_all_all(a, b);
-        res
-    }
-}
-
-// From Schlegel et al., Fast Sorted-Set Intersection using SIMD Instructions
-//
-// Impl note:
-// The x86 PCMPESTRM used in the paper has been replaced with a simd or-shift
-// While several more instructions, it is portable to many SIMD ISAs
-// Benchmarked on my hardware: the runtime was within 1 std dev of D. Lemire's impl in CRoaring
-#[allow(non_snake_case)]
-unsafe fn intersect_vector16_std(
-    A: *const u16,
-    s_a: usize,
-    B: *const u16,
-    s_b: usize,
-    C: *mut u16,
-) -> usize {
-    const VEC_LEN: usize = mem::size_of::<u16x8>() / mem::size_of::<u16>();
-
-    let st_a = (s_a / VEC_LEN) * VEC_LEN;
-    let st_b = (s_b / VEC_LEN) * VEC_LEN;
-
-    let mut count: usize = 0;
-    let mut i_a: usize = 0;
-    let mut i_b: usize = 0;
-    if (i_a < st_a) && (i_b < st_b) {
-        let mut v_a: __m128i = _mm_lddqu_si128(A.add(i_a).cast::<__m128i>());
-        let mut v_b = _mm_lddqu_si128(B.add(i_b).cast::<__m128i>());
-        loop {
-            let r = cmpistrm_shim(&v_a, &v_b);
-            // TODO THIS SHOULD BE ALIGNED
-            let sm16: __m128i =
-                _mm_loadu_si128(shuffle_mask16.as_ptr().cast::<__m128i>().offset(r as isize));
-            let p: __m128i = _mm_shuffle_epi8(v_a, sm16);
-            _mm_storeu_si128(C.add(count).cast::<__m128i>(), p); // can overflow
-            count += _popcnt32(r) as usize;
-            let a_max: u16 = *A.add(i_a + VEC_LEN - 1);
-            let b_max: u16 = *B.add(i_b + VEC_LEN - 1);
-            if a_max <= b_max {
-                i_a += VEC_LEN;
-                if i_a == st_a {
-                    break;
-                }
-                v_a = _mm_lddqu_si128(A.add(i_a).cast::<__m128i>());
-            }
-            if b_max <= a_max {
-                i_b += VEC_LEN;
-                if i_b == st_b {
-                    break;
-                }
-                v_b = _mm_lddqu_si128(B.add(i_b).cast::<__m128i>());
-            }
-        }
-    }
-    // intersect the tail using scalar intersection
-    while i_a < s_a && i_b < s_b {
-        let a: u16 = *A.add(i_a);
-        let b: u16 = *B.add(i_b);
-        if a < b {
-            i_a += 1;
-        } else if b < a {
-            i_b += 1;
-        } else {
-            *C.add(count) = a; //==b;
-            count += 1;
-            i_a += 1;
-            i_b += 1;
-        }
-    }
-    return count as usize;
-}
-
-// x86 SIMD included for comparing benchmarks
+// Here be dragons!
 
 const CMPESTRM_CTRL: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;
 
@@ -370,7 +384,7 @@ unsafe fn intersect_vector16_x86(
             // TODO THIS SHOULD BE ALIGNED
             //let sm16: __m128i = _mm_load_si128(shuffle_mask16.as_ptr().offset(r as isize).cast::<__m128i>());
             let sm16: __m128i =
-                _mm_loadu_si128(shuffle_mask16.as_ptr().cast::<__m128i>().offset(r as isize));
+                _mm_loadu_si128(SHUFFLE_MASK.as_ptr().cast::<__m128i>().offset(r as isize));
             let p: __m128i = _mm_shuffle_epi8(v_a, sm16);
             _mm_storeu_si128(C.add(count).cast::<__m128i>(), p); // can overflow
             count += _popcnt32(r) as usize;
@@ -398,7 +412,7 @@ unsafe fn intersect_vector16_x86(
                 // TODO THIS SHOULD BE ALIGNED
                 //let sm16: __m128i = _mm_load_si128(shuffle_mask16.as_ptr().offset(r as isize).cast::<__m128i>());
                 let sm16: __m128i =
-                    _mm_loadu_si128(shuffle_mask16.as_ptr().cast::<__m128i>().offset(r as isize));
+                    _mm_loadu_si128(SHUFFLE_MASK.as_ptr().cast::<__m128i>().offset(r as isize));
                 let p: __m128i = _mm_shuffle_epi8(v_a, sm16);
                 _mm_storeu_si128(C.add(count).cast::<__m128i>(), p); // can overflow
                 count += _popcnt32(r) as usize;
@@ -701,7 +715,7 @@ unsafe fn union_vector16(
 // TODO aligned
 //ALIGNED(0x1000)
 #[allow(non_upper_case_globals)]
-const shuffle_mask16: [u8; 4096] = [
+const SHUFFLE_MASK: [u8; 4096] = [
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0x02, 0x03, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
