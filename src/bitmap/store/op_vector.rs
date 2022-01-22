@@ -3,7 +3,7 @@ use std::mem;
 use std::ptr::copy_nonoverlapping;
 use std::simd::{
     i8x16, mask16x4, mask16x8, u16x16, u16x4, u16x8, u8x16, usizex8, LaneCount, Mask, Simd,
-    SimdElement, SupportedLaneCount, Swizzle2, Which,
+    SimdElement, SupportedLaneCount
 };
 
 /// ## SIMD utilities
@@ -285,6 +285,147 @@ pub fn and_std_simd(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     out
 }
 
+#[inline]
+fn store_unique(old: u16x8, newval: u16x8, output: &mut [u16]) -> usize {
+    use std::simd::{Swizzle2, Which, Which::First as A, Which::Second as B};
+
+    /// A static swizzle
+    struct UniqueSwizzle;
+    impl Swizzle2<8, 8> for UniqueSwizzle {
+        const INDEX: [Which; 8] = [ B(7), A(0), A(1), A(2), A(3), A(4), A(5), A(6) ];
+    }
+
+    let tmp: u16x8 = UniqueSwizzle::swizzle2(newval, old);
+    let mask: usize = shim::to_bitmask(tmp.lanes_eq(newval));
+    let count: usize = 8 - mask.count_ones() as usize;
+    let key: u16x8 = Simd::from_slice(&unsafe { mem::transmute::<&[u8], &[u16]>(&uniqshuf) }[mask * 8..]);
+    let val: u16x8 = shim::swizzle_u16x8(newval, key);
+    unsafe { util::store_unchecked(val, output); }
+    return count;
+}
+
+pub fn simd_merge(a: u16x8, b: u16x8) -> (u16x8, u16x8) {
+    let mut tmp: u16x8 = util::lanes_min(a, b);
+    let mut max: u16x8 = util::lanes_max(a, b);
+    tmp = tmp.rotate_lanes_left::<1>();
+    let mut min: u16x8 = util::lanes_min(tmp, max);
+    for _ in 0..6 {
+        max = util::lanes_max(tmp, max);
+        tmp = min.rotate_lanes_left::<1>();
+        min = util::lanes_min(tmp, max);
+    }
+    max = util::lanes_max(tmp, max);
+    min = min.rotate_lanes_left::<1>();
+    (min, max)
+}
+
+/// De-duplicates `slice` in place
+/// Returns the end index of the deduplicated slice.
+/// elements after the return value are not guaranteed to be unique or in order
+fn dedup(slice: &mut [u16]) -> usize {
+    let mut pos: usize = 1;
+    for i in 1..slice.len() {
+        if slice[i] != slice[i - 1] {
+            slice[pos] = slice[i];
+            pos += 1;
+        }
+    }
+    return pos;
+}
+
+// a one-pass SSE union algorithm
+pub fn or_std_simd(
+    lhs: &[u16],
+    rhs: &[u16],
+) -> Vec<u16> {
+    let mut out = vec![0; lhs.len() + rhs.len()];
+
+    if (lhs.len() < 8) || (rhs.len() < 8) {
+        let len = super::array_store::or_array_walk_mut(lhs, rhs, out.as_mut_slice());
+        out.truncate(len);
+        return out;
+    }
+
+    let len1: usize = lhs.len() / 8;
+    let len2: usize = rhs.len() / 8;
+
+
+    let v_a: u16x8 = unsafe { load_unchecked(lhs) };
+    let v_b: u16x8 = unsafe { load_unchecked(rhs) };
+    let mut last_store: u16x8 = Simd::splat(u16::MAX);
+    let (mut vecMin, mut vecMax) = simd_merge(v_a, v_b);
+
+    let mut pos1 = 1;
+    let mut pos2 = 1;
+
+    let mut k = 0;
+
+    k += store_unique(last_store, vecMin, &mut out[k..]);
+    last_store = vecMin;
+    if (pos1 < len1) && (pos2 < len2) {
+        let mut V: u16x8;
+        let mut curA: u16 = lhs[8 * pos1];
+        let mut curB: u16 = rhs[8 * pos2];
+        loop {
+            if curA <= curB {
+                V = unsafe { util::load_unchecked(&lhs[8 * pos1..]) };
+                pos1 += 1;
+                if pos1 < len1 {
+                    curA = lhs[8 * pos1];
+                } else {
+                    break;
+                }
+            } else {
+                V = unsafe { util::load_unchecked(&rhs[8 * pos2..]) };
+                pos2 += 1;
+                if pos2 < len2 {
+                    curB = rhs[8 * pos2];
+                } else {
+                    break;
+                }
+            }
+            (vecMin, vecMax) = simd_merge(V, vecMax);
+            k += store_unique(last_store, vecMin, &mut out[k..]);
+            last_store = vecMin;
+        }
+        (vecMin, vecMax) = simd_merge(V, vecMax);
+        k += store_unique(last_store, vecMin, &mut out[k..]);
+        last_store = vecMin;
+    }
+    // we finish the rest off using a scalar algorithm
+    // could be improved?
+    //
+    // copy the small end on a tmp buffer
+    let mut buffer: [u16; 16] = [0; 16];
+    /// remaining size
+    let mut rem = store_unique(last_store, vecMax, &mut buffer);
+    if pos1 == len1 {
+        let n = lhs.len() - 8 * len1;
+        buffer[rem..rem + n].copy_from_slice(&lhs[8 * pos1..]);
+        rem += n;
+        buffer[..rem as usize].sort_unstable();
+        rem = dedup(&mut buffer[..rem]);
+        k += super::array_store::or_array_walk_mut(
+            &buffer[..rem],
+            &rhs[8 * pos2..],
+            &mut out[k..],
+        );
+    } else {
+        let n = rhs.len() - 8 * len2;
+        buffer[rem..rem + n].copy_from_slice(&rhs[8 * pos2..]);
+        rem += n;
+        buffer[..rem as usize].sort_unstable();
+        rem = dedup(&mut buffer[..rem]);
+        k += super::array_store::or_array_walk_mut(
+            &buffer[..rem],
+            &lhs[8 * pos1..],
+            &mut out[k..],
+        );
+    }
+    out.truncate(k);
+    out
+}
+
 /// A static swizzle used by store_unique
 struct UniqueSwizzle;
 
@@ -457,7 +598,7 @@ pub fn or_x86_simd(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     let mut vec = Vec::with_capacity(lhs.len() + rhs.len());
     unsafe {
         let len =
-            union_vector16(lhs.as_ptr(), lhs.len(), rhs.as_ptr(), rhs.len(), vec.as_mut_ptr());
+            union_vector16_x86(lhs.as_ptr(), lhs.len(), rhs.as_ptr(), rhs.len(), vec.as_mut_ptr());
         vec.set_len(len);
     }
     vec
@@ -507,9 +648,9 @@ const CMPESTRM_CTRL: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MAS
  */
 #[allow(non_snake_case)]
 unsafe fn intersect_vector16_x86(
-    A: *const u16,
+    V_A: *const u16,
     s_a: usize,
-    B: *const u16,
+    V_B: *const u16,
     s_b: usize,
     C: *mut u16,
 ) -> usize {
@@ -522,9 +663,9 @@ unsafe fn intersect_vector16_x86(
     let mut v_a: __m128i;
     let mut v_b: __m128i;
     if (i_a < st_a) && (i_b < st_b) {
-        v_a = _mm_lddqu_si128(A.add(i_a).cast::<__m128i>());
-        v_b = _mm_lddqu_si128(B.add(i_b).cast::<__m128i>());
-        while (*A.add(i_a) == 0) || (*B.add(i_b) == 0) {
+        v_a = _mm_lddqu_si128(V_A.add(i_a).cast::<__m128i>());
+        v_b = _mm_lddqu_si128(V_B.add(i_b).cast::<__m128i>());
+        while (*V_A.add(i_a) == 0) || (*V_B.add(i_b) == 0) {
             let res_v: __m128i =
                 _mm_cmpestrm::<CMPESTRM_CTRL>(v_b, vectorlength as i32, v_a, vectorlength as i32);
             let r: i32 = _mm_extract_epi32::<0>(res_v);
@@ -535,21 +676,21 @@ unsafe fn intersect_vector16_x86(
             let p: __m128i = _mm_shuffle_epi8(v_a, sm16);
             _mm_storeu_si128(C.add(count).cast::<__m128i>(), p); // can overflow
             count += _popcnt32(r) as usize;
-            let a_max: u16 = *A.add(i_a + vectorlength - 1);
-            let b_max: u16 = *B.add(i_b + vectorlength - 1);
+            let a_max: u16 = *V_A.add(i_a + vectorlength - 1);
+            let b_max: u16 = *V_B.add(i_b + vectorlength - 1);
             if a_max <= b_max {
                 i_a += vectorlength;
                 if i_a == st_a {
                     break;
                 }
-                v_a = _mm_lddqu_si128(A.add(i_a).cast::<__m128i>());
+                v_a = _mm_lddqu_si128(V_A.add(i_a).cast::<__m128i>());
             }
             if b_max <= a_max {
                 i_b += vectorlength;
                 if i_b == st_b {
                     break;
                 }
-                v_b = _mm_lddqu_si128(B.add(i_b).cast::<__m128i>());
+                v_b = _mm_lddqu_si128(V_B.add(i_b).cast::<__m128i>());
             }
         }
         if (i_a < st_a) && (i_b < st_b) {
@@ -563,29 +704,29 @@ unsafe fn intersect_vector16_x86(
                 let p: __m128i = _mm_shuffle_epi8(v_a, sm16);
                 _mm_storeu_si128(C.add(count).cast::<__m128i>(), p); // can overflow
                 count += _popcnt32(r) as usize;
-                let a_max: u16 = *A.add(i_a + vectorlength - 1);
-                let b_max: u16 = *B.add(i_b + vectorlength - 1);
+                let a_max: u16 = *V_A.add(i_a + vectorlength - 1);
+                let b_max: u16 = *V_B.add(i_b + vectorlength - 1);
                 if a_max <= b_max {
                     i_a += vectorlength;
                     if i_a == st_a {
                         break;
                     }
-                    v_a = _mm_lddqu_si128(A.add(i_a).cast::<__m128i>());
+                    v_a = _mm_lddqu_si128(V_A.add(i_a).cast::<__m128i>());
                 }
                 if b_max <= a_max {
                     i_b += vectorlength;
                     if i_b == st_b {
                         break;
                     }
-                    v_b = _mm_lddqu_si128(B.add(i_b).cast::<__m128i>());
+                    v_b = _mm_lddqu_si128(V_B.add(i_b).cast::<__m128i>());
                 }
             }
         }
     }
     // intersect the tail using scalar intersection
     while i_a < s_a && i_b < s_b {
-        let a: u16 = *A.add(i_a);
-        let b: u16 = *B.add(i_b);
+        let a: u16 = *V_A.add(i_a);
+        let b: u16 = *V_B.add(i_b);
         if a < b {
             i_a += 1;
         } else if b < a {
@@ -603,7 +744,7 @@ unsafe fn intersect_vector16_x86(
 // can one vectorize the computation of the union? (Update: Yes! See
 // union_vector16).
 #[allow(non_snake_case)]
-unsafe fn union_uint16(
+unsafe fn union_uint16_x86(
     set_1: *const u16,
     size_1: usize,
     set_2: *const u16,
@@ -684,7 +825,7 @@ unsafe fn union_uint16(
 // Algorithm for Sorting an Array of Structures
 #[allow(non_snake_case)]
 #[inline]
-unsafe fn sse_merge(
+unsafe fn sse_merge_x86(
     vInput1: *const __m128i,
     vInput2: *const __m128i, // input 1 & 2
     vecMin: *mut __m128i,
@@ -721,7 +862,7 @@ unsafe fn sse_merge(
 // written vector was "old"
 #[allow(non_snake_case)]
 #[inline]
-unsafe fn store_unique(old: __m128i, newval: __m128i, output: *mut u16) -> usize {
+unsafe fn store_unique_x86(old: __m128i, newval: __m128i, output: *mut u16) -> usize {
     let vecTmp: __m128i = _mm_alignr_epi8::<14>(newval, old);
     // lots of high latency instructions follow (optimize?)
     let M: i32 =
@@ -737,7 +878,7 @@ unsafe fn store_unique(old: __m128i, newval: __m128i, output: *mut u16) -> usize
 // could be avoided?
 #[allow(non_snake_case)]
 #[inline]
-unsafe fn unique(out: *mut u16, len: usize) -> usize {
+unsafe fn unique_x86(out: *mut u16, len: usize) -> usize {
     let mut pos: usize = 1;
     for i in 1..len {
         if *out.add(i) != *out.add(i - 1) {
@@ -751,7 +892,7 @@ unsafe fn unique(out: *mut u16, len: usize) -> usize {
 // a one-pass SSE union algorithm
 // This function may not be safe if array1 == output or array2 == output.
 #[allow(non_camel_case_types, non_snake_case)]
-unsafe fn union_vector16(
+unsafe fn union_vector16_x86(
     array1: *const u16,
     length1: usize,
     array2: *const u16,
@@ -759,7 +900,7 @@ unsafe fn union_vector16(
     mut output: *mut u16,
 ) -> usize {
     if (length1 < 8) || (length2 < 8) {
-        return union_uint16(array1, length1, array2, length2, output);
+        return union_uint16_x86(array1, length1, array2, length2, output);
     }
 
     let vA: __m128i;
@@ -780,9 +921,9 @@ unsafe fn union_vector16(
     vB = _mm_lddqu_si128(array2.cast());
     pos2 += 1;
 
-    sse_merge(&vA, &vB, &mut vecMin, &mut vecMax);
+    sse_merge_x86(&vA, &vB, &mut vecMin, &mut vecMax);
     laststore = _mm_set1_epi16(-1);
-    output = output.add(store_unique(laststore, vecMin, output));
+    output = output.add(store_unique_x86(laststore, vecMin, output));
     laststore = vecMin;
     if (pos1 < len1) && (pos2 < len2) {
         let mut curA: u16;
@@ -807,12 +948,12 @@ unsafe fn union_vector16(
                     break;
                 }
             }
-            sse_merge(&V, &vecMax, &mut vecMin, &mut vecMax);
-            output = output.add(store_unique(laststore, vecMin, output));
+            sse_merge_x86(&V, &vecMax, &mut vecMin, &mut vecMax);
+            output = output.add(store_unique_x86(laststore, vecMin, output));
             laststore = vecMin;
         }
-        sse_merge(&V, &vecMax, &mut vecMin, &mut vecMax);
-        output = output.add(store_unique(laststore, vecMin, output));
+        sse_merge_x86(&V, &vecMax, &mut vecMin, &mut vecMax);
+        output = output.add(store_unique_x86(laststore, vecMin, output));
         laststore = vecMin;
     }
     // we finish the rest off using a scalar algorithm
@@ -821,7 +962,7 @@ unsafe fn union_vector16(
     // copy the small end on a tmp buffer
     let mut len: usize = (output.offset_from(initoutput)) as usize;
     let mut buffer: [u16; 16] = [0; 16];
-    let mut leftoversize = store_unique(laststore, vecMax, buffer.as_mut_ptr());
+    let mut leftoversize = store_unique_x86(laststore, vecMax, buffer.as_mut_ptr());
     if pos1 == len1 {
         copy_nonoverlapping(
             array1.add(8 * pos1),
@@ -830,8 +971,8 @@ unsafe fn union_vector16(
         );
         leftoversize += length1 - 8 * len1;
         buffer[..leftoversize as usize].sort_unstable();
-        leftoversize = unique(buffer.as_mut_ptr(), leftoversize);
-        len += union_uint16(
+        leftoversize = unique_x86(buffer.as_mut_ptr(), leftoversize);
+        len += union_uint16_x86(
             buffer.as_mut_ptr(),
             leftoversize,
             array2.add(8 * pos2),
@@ -846,8 +987,8 @@ unsafe fn union_vector16(
         );
         leftoversize += length2 - 8 * len2;
         buffer[..leftoversize as usize].sort_unstable();
-        leftoversize = unique(buffer.as_mut_ptr(), leftoversize);
-        len += union_uint16(
+        leftoversize = unique_x86(buffer.as_mut_ptr(), leftoversize);
+        len += union_uint16_x86(
             buffer.as_mut_ptr(),
             leftoversize,
             array1.add(8 * pos1),
