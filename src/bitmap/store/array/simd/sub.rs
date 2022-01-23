@@ -4,7 +4,7 @@ use crate::bitmap::store::array::simd::lut::SHUFFLE_MASK;
 pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     let mut out = vec![0; lhs.len().max(rhs.len()) + 4096];
     let len = unsafe {
-        _difference_vector_x86(lhs.as_ptr(), lhs.len(), rhs.as_ptr(), rhs.len(), out.as_mut_ptr())
+        _difference_vector_x86(lhs, rhs,out.as_mut_ptr())
     };
     out.truncate(len);
     out
@@ -12,10 +12,8 @@ pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
 
 /// Caller must ensure does not alias A or B
 unsafe fn _difference_vector_x86(
-    mut lhs: *const u16,
-    mut lhs_len: usize,
-    mut rhs: *const u16,
-    mut rhs_len: usize,
+    mut lhs: &[u16],
+    mut rhs: &[u16],
     out: *mut u16,
 ) -> usize {
     use std::arch::x86_64::{
@@ -25,35 +23,40 @@ unsafe fn _difference_vector_x86(
     };
     use std::mem;
     use std::ptr::{copy_nonoverlapping, write_bytes};
+
     const CMPESTRM_CTRL: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;
     const VECTOR_LENGTH: usize = mem::size_of::<__m128i>() / mem::size_of::<u16>();
+
+    let mut lhs_len = lhs.len();
+    let mut rhs_len = rhs.len();
+
     unsafe {
         // we handle the degenerate case
         if lhs_len == 0 {
-            copy_nonoverlapping(rhs, out, rhs_len);
+            copy_nonoverlapping(rhs.as_ptr(), out, rhs_len);
             return rhs_len;
         }
 
         if rhs_len == 0 {
-            copy_nonoverlapping(lhs, out, lhs_len);
+            copy_nonoverlapping(lhs.as_ptr(), out, lhs_len);
             return lhs_len;
         }
         // handle the leading zeroes, it is messy but it allows us to use the fast
         // _mm_cmpistrm instrinsic safely
         let mut count = 0;
-        if (*lhs == 0) || (*rhs == 0) {
-            if (*lhs == 0) && (*rhs == 0) {
-                lhs = lhs.offset(1);
+        if (lhs[0] == 0) || (rhs[0] == 0) {
+            if (lhs[0] == 0) && (rhs[0] == 0) {
+                lhs = &lhs[1..];
                 lhs_len -= 1;
-                rhs = rhs.offset(1);
+                rhs = &rhs[1..];
                 rhs_len -= 1;
-            } else if *lhs == 0 {
+            } else if lhs[0] == 0 {
                 *out.add(count) = 0;
                 count += 1;
-                lhs = lhs.offset(1);
+                lhs = &lhs[1..];
                 lhs_len -= 1;
             } else {
-                rhs = rhs.offset(1);
+                rhs = &rhs[1..];
                 rhs_len -= 1;
             }
         }
@@ -72,8 +75,8 @@ unsafe fn _difference_vector_x86(
             // we load a vector from A and a vector from B
             // v_a = _mm_lddqu_si128((__m128i *)&A[i_a]);
             // v_b = _mm_lddqu_si128((__m128i *)&B[i_b]);
-            let mut v_a: __m128i = _mm_lddqu_si128(lhs.add(i_a).cast::<__m128i>());
-            let mut v_b: __m128i = _mm_lddqu_si128(rhs.add(i_b).cast::<__m128i>());
+            let mut v_a: __m128i = _mm_lddqu_si128(lhs.as_ptr().add(i_a).cast::<__m128i>());
+            let mut v_b: __m128i = _mm_lddqu_si128(rhs.as_ptr().add(i_b).cast::<__m128i>());
             // we have a runningmask which indicates which values from A have been
             // spotted in B, these don't get written out.
             let mut runningmask_a_found_in_b: __m128i = _mm_setzero_si128();
@@ -89,8 +92,8 @@ unsafe fn _difference_vector_x86(
                 // we always compare the last values of A and B
                 // const uint16_t a_max = A[i_a + vectorlength - 1];
                 // const uint16_t b_max = B[i_b + vectorlength - 1];
-                let a_max: u16 = *lhs.add(i_a + VECTOR_LENGTH - 1);
-                let b_max: u16 = *rhs.add(i_b + VECTOR_LENGTH - 1);
+                let a_max: u16 = lhs[i_a + VECTOR_LENGTH - 1];
+                let b_max: u16 = rhs[i_b + VECTOR_LENGTH - 1];
                 if a_max <= b_max {
                     // Ok. In this code path, we are ready to write our v_a
                     // because there is no need to read more from B, they will
@@ -116,7 +119,7 @@ unsafe fn _difference_vector_x86(
                     }
                     runningmask_a_found_in_b = _mm_setzero_si128();
                     // v_a = _mm_lddqu_si128((__m128i *)&A[i_a]);
-                    v_a = _mm_lddqu_si128(lhs.add(i_a).cast::<__m128i>());
+                    v_a = _mm_lddqu_si128(lhs.as_ptr().add(i_a).cast::<__m128i>());
                 }
                 if b_max <= a_max {
                     // in this code path, the current v_b has become useless
@@ -125,7 +128,7 @@ unsafe fn _difference_vector_x86(
                         break;
                     }
                     //v_b = _mm_lddqu_si128((__m128i *)&B[i_b]);
-                    v_b = _mm_lddqu_si128(rhs.add(i_b).cast::<__m128i>());
+                    v_b = _mm_lddqu_si128(rhs.as_ptr().add(i_b).cast::<__m128i>());
                 }
             }
             // at this point, either we have i_a == st_a, which is the end of the
@@ -136,7 +139,7 @@ unsafe fn _difference_vector_x86(
                 // we have unfinished business...
                 let mut buffer: [u16; 8] = [0; 8]; // buffer to do a masked load
                 write_bytes(buffer.as_mut_ptr(), 0, 8);
-                copy_nonoverlapping(rhs.add(i_b), buffer.as_mut_ptr(), rhs_len - i_b);
+                copy_nonoverlapping(rhs.as_ptr().add(i_b), buffer.as_mut_ptr(), rhs_len - i_b);
                 v_b = _mm_lddqu_si128(buffer.as_ptr().cast());
                 let a_found_in_b: __m128i = _mm_cmpistrm::<CMPESTRM_CTRL>(v_b, v_a);
                 runningmask_a_found_in_b = _mm_or_si128(runningmask_a_found_in_b, a_found_in_b);
@@ -159,8 +162,8 @@ unsafe fn _difference_vector_x86(
         // match arms can be reordered, the ordering here is perf sensitive
         #[allow(clippy::comparison_chain)]
         while i_a < lhs_len && i_b < rhs_len {
-            let a = *lhs.add(i_a);
-            let b = *rhs.add(i_b);
+            let a = lhs[i_a];
+            let b = rhs[i_b];
             if a > b {
                 i_b += 1;
             } else if a < b {
@@ -174,14 +177,14 @@ unsafe fn _difference_vector_x86(
             }
         }
         if i_a < lhs_len {
-            if out as *const u16 == lhs {
+            if out as *const u16 == lhs.as_ptr() {
                 assert!(count <= i_a);
                 if count < i_a {
-                    copy_nonoverlapping(lhs.add(i_a), out.add(count), lhs_len - i_a);
+                    copy_nonoverlapping(lhs.as_ptr().add(i_a), out.add(count), lhs_len - i_a);
                 }
             } else {
                 for i in 0..(lhs_len - i_a) {
-                    *out.add(count + i) = *lhs.add(i + i_a);
+                    *out.add(count + i) = lhs[i + i_a];
                 }
             }
             count += lhs_len - i_a;
