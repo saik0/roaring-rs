@@ -1,40 +1,36 @@
 use crate::bitmap::store::array::simd::lut::SHUFFLE_MASK;
-use crate::simd::compat::to_bitmask;
+use crate::simd::compat::{swizzle_u16x8, to_bitmask};
 use crate::simd::util::matrix_cmp;
-use std::simd::{u16x8, Simd};
-
-// A shim until we rewrite method args / return type
-pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
-    let mut out = vec![0; lhs.len().max(rhs.len()) + 4096];
-    let len = unsafe { _difference_vector_x86(lhs, rhs, out.as_mut_ptr()) };
-    out.truncate(len);
-    out
-}
+use std::simd::{u16x8, u8x16, Simd};
 
 /// Caller must ensure does not alias A or B
-unsafe fn _difference_vector_x86(mut lhs: &[u16], mut rhs: &[u16], out: *mut u16) -> usize {
+pub fn sub(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
     use std::arch::x86_64::{
-        __m128i, _mm_lddqu_si128, _mm_load_si128, _mm_loadu_si128, _mm_shuffle_epi8,
-        _mm_storeu_si128,
+        __m128i, _mm_lddqu_si128, _mm_load_si128, _mm_shuffle_epi8, _mm_storeu_si128,
     };
     use std::mem;
     use std::ptr::{copy_nonoverlapping, write_bytes};
     const VECTOR_LENGTH: usize = mem::size_of::<__m128i>() / mem::size_of::<u16>();
 
+    let mut out = vec![0; lhs.len().max(rhs.len()) + 4096];
+
     let mut lhs_len = lhs.len();
     let mut rhs_len = rhs.len();
 
-    unsafe {
-        // we handle the degenerate case
-        if lhs_len == 0 {
-            copy_nonoverlapping(rhs.as_ptr(), out, rhs_len);
-            return rhs_len;
-        }
+    // we handle the degenerate case
+    if lhs_len == 0 {
+        out.clear();
+        out.extend_from_slice(rhs);
+        return out;
+    }
 
-        if rhs_len == 0 {
-            copy_nonoverlapping(lhs.as_ptr(), out, lhs_len);
-            return lhs_len;
-        }
+    if rhs_len == 0 {
+        out.clear();
+        out.extend_from_slice(lhs);
+        return out;
+    }
+
+    unsafe {
         // handle the leading zeroes, it is messy but it allows us to use the fast
         // _mm_cmpistrm instrinsic safely
         let mut count = 0;
@@ -45,7 +41,7 @@ unsafe fn _difference_vector_x86(mut lhs: &[u16], mut rhs: &[u16], out: *mut u16
                 rhs = &rhs[1..];
                 rhs_len -= 1;
             } else if lhs[0] == 0 {
-                *out.add(count) = 0;
+                out[count] = 0;
                 count += 1;
                 lhs = &lhs[1..];
                 lhs_len -= 1;
@@ -95,11 +91,15 @@ unsafe fn _difference_vector_x86(mut lhs: &[u16], mut rhs: &[u16], out: *mut u16
                     let bitmask_belongs_to_difference = runningmask_a_found_in_b ^ 0xFF;
                     /*** next few lines are probably expensive *****/
                     // TODO aligned
-                    let sm16: __m128i = _mm_loadu_si128(
-                        SHUFFLE_MASK.as_ptr().cast::<__m128i>().add(bitmask_belongs_to_difference),
-                    );
-                    let p: __m128i = _mm_shuffle_epi8(mem::transmute(v_a), sm16);
-                    _mm_storeu_si128(out.add(count).cast::<__m128i>(), p); // can overflow
+                    let sm16: u8x16 =
+                        Simd::from_slice(&SHUFFLE_MASK[bitmask_belongs_to_difference * 16..]);
+                    // Safety: This is safe as the types are the same size
+                    let sm16: u16x8 = mem::transmute(sm16);
+                    let p: u16x8 = swizzle_u16x8(v_a, sm16);
+                    _mm_storeu_si128(
+                        out.as_mut_ptr().add(count).cast::<__m128i>(),
+                        mem::transmute(p),
+                    ); // can overflow
                     count += bitmask_belongs_to_difference.count_ones() as usize;
                     // we advance a
                     i_a += VECTOR_LENGTH;
@@ -138,7 +138,7 @@ unsafe fn _difference_vector_x86(mut lhs: &[u16], mut rhs: &[u16], out: *mut u16
                     SHUFFLE_MASK.as_ptr().cast::<__m128i>().add(bitmask_belongs_to_difference),
                 );
                 let p: __m128i = _mm_shuffle_epi8(mem::transmute(v_a), sm16);
-                _mm_storeu_si128(out.add(count).cast::<__m128i>(), p); // can overflow
+                _mm_storeu_si128(out.as_mut_ptr().add(count).cast::<__m128i>(), p); // can overflow
                 count += bitmask_belongs_to_difference.count_ones() as usize;
                 i_a += VECTOR_LENGTH;
             }
@@ -153,7 +153,7 @@ unsafe fn _difference_vector_x86(mut lhs: &[u16], mut rhs: &[u16], out: *mut u16
             if a > b {
                 i_b += 1;
             } else if a < b {
-                *out.add(count) = a;
+                out[count] = a;
                 count += 1;
                 i_a += 1;
             } else {
@@ -163,18 +163,11 @@ unsafe fn _difference_vector_x86(mut lhs: &[u16], mut rhs: &[u16], out: *mut u16
             }
         }
         if i_a < lhs_len {
-            if out as *const u16 == lhs.as_ptr() {
-                assert!(count <= i_a);
-                if count < i_a {
-                    copy_nonoverlapping(lhs.as_ptr().add(i_a), out.add(count), lhs_len - i_a);
-                }
-            } else {
-                for i in 0..(lhs_len - i_a) {
-                    *out.add(count + i) = lhs[i + i_a];
-                }
-            }
-            count += lhs_len - i_a;
+            let n = lhs_len - i_a;
+            out[count..n + count].copy_from_slice(&lhs[i_a..n + i_a]);
+            count += n;
         }
-        count
+        out.truncate(count);
+        out
     }
 }
