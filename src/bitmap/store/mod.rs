@@ -1,7 +1,6 @@
 mod array;
 mod array_store;
 mod bitmap_store;
-mod op_vector;
 
 use crate::bitmap::store::array_store::{
     and_assign_array_opt, and_assign_array_opt_unsafe, and_assign_array_run, and_assign_array_walk,
