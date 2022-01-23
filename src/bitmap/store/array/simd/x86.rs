@@ -1,3 +1,9 @@
+#![allow(missing_docs)]
+#![allow(non_snake_case)]
+#![allow(non_upper_case_globals)]
+#![allow(clippy::comparison_chain)]
+#![allow(clippy::needless_range_loop)]
+
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██╗░░██╗░█████╗░░█████╗░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░╚██╗██╔╝██╔══██╗██╔═══╝░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
@@ -9,7 +15,7 @@
 //
 // x86 SIMD intrinsics included temporarily for ease of comparing benchmarks
 
-use crate::bitmap::store::array::simd::lut::{uniqshuf, SHUFFLE_MASK};
+use crate::bitmap::store::array::simd::lut::{SHUFFLE_MASK, UNIQUE_SHUF};
 use std::arch::x86_64::{
     __m128i, _mm_alignr_epi8, _mm_cmpeq_epi16, _mm_cmpestrm, _mm_cmpistrm, _mm_extract_epi32,
     _mm_lddqu_si128, _mm_load_si128, _mm_loadu_si128, _mm_max_epu16, _mm_min_epu16,
@@ -307,7 +313,7 @@ unsafe fn store_unique_x86(old: __m128i, newval: __m128i, output: *mut u16) -> u
     let M: i32 =
         _mm_movemask_epi8(_mm_packs_epi16(_mm_cmpeq_epi16(vecTmp, newval), _mm_setzero_si128()));
     let numberofnewvalues: usize = 8 - _popcnt32(M) as usize;
-    let key: __m128i = _mm_lddqu_si128(uniqshuf.as_ptr().cast::<__m128i>().offset(M as isize));
+    let key: __m128i = _mm_lddqu_si128(UNIQUE_SHUF.as_ptr().cast::<__m128i>().offset(M as isize));
     let val: __m128i = _mm_shuffle_epi8(newval, key);
     _mm_storeu_si128(output as *mut __m128i, val);
     numberofnewvalues
@@ -499,8 +505,7 @@ unsafe fn _difference_vector_x86(
             // whether it is seen
             // in B
             let a_found_in_b: __m128i = _mm_cmpistrm::<CMPESTRM_CTRL>(v_b, v_a);
-            let mut runningmask_a_found_in_b: __m128i =
-                _mm_or_si128(runningmask_a_found_in_b, a_found_in_b);
+            runningmask_a_found_in_b = _mm_or_si128(runningmask_a_found_in_b, a_found_in_b);
             // we always compare the last values of A and B
             // const uint16_t a_max = A[i_a + vectorlength - 1];
             // const uint16_t b_max = B[i_b + vectorlength - 1];

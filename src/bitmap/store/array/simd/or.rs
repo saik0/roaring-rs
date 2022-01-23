@@ -1,4 +1,4 @@
-use crate::bitmap::store::array::simd::lut::uniqshuf;
+use crate::bitmap::store::array::simd::lut::UNIQUE_SHUF;
 use crate::bitmap::store::array::util::or_array_walk_mut;
 use crate::simd::compat::{swizzle_u16x8, to_bitmask};
 use crate::simd::util::{lanes_max, lanes_min, load_unchecked, store_unchecked};
@@ -19,7 +19,7 @@ fn store_unique(old: u16x8, newval: u16x8, output: &mut [u16]) -> usize {
     let mask: usize = to_bitmask(tmp.lanes_eq(newval));
     let count: usize = 8 - mask.count_ones() as usize;
     let key: u16x8 =
-        Simd::from_slice(&unsafe { mem::transmute::<&[u8], &[u16]>(&uniqshuf) }[mask * 8..]);
+        Simd::from_slice(&unsafe { mem::transmute::<&[u8], &[u16]>(&UNIQUE_SHUF) }[mask * 8..]);
     let val: u16x8 = swizzle_u16x8(newval, key);
     unsafe {
         store_unchecked(val, output);
@@ -83,32 +83,32 @@ pub fn or(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     k += store_unique(Simd::splat(u16::MAX), v_min, &mut out[k..]);
     let mut v_prev: u16x8 = v_min;
     if (i < len1) && (j < len2) {
-        let mut V: u16x8;
-        let mut curA: u16 = lhs[8 * i];
-        let mut curB: u16 = rhs[8 * j];
+        let mut v: u16x8;
+        let mut cur_a: u16 = lhs[8 * i];
+        let mut cur_b: u16 = rhs[8 * j];
         loop {
-            if curA <= curB {
-                V = unsafe { load_unchecked(&lhs[8 * i..]) };
+            if cur_a <= cur_b {
+                v = unsafe { load_unchecked(&lhs[8 * i..]) };
                 i += 1;
                 if i < len1 {
-                    curA = lhs[8 * i];
+                    cur_a = lhs[8 * i];
                 } else {
                     break;
                 }
             } else {
-                V = unsafe { load_unchecked(&rhs[8 * j..]) };
+                v = unsafe { load_unchecked(&rhs[8 * j..]) };
                 j += 1;
                 if j < len2 {
-                    curB = rhs[8 * j];
+                    cur_b = rhs[8 * j];
                 } else {
                     break;
                 }
             }
-            (v_min, v_max) = simd_merge(V, v_max);
+            (v_min, v_max) = simd_merge(v, v_max);
             k += store_unique(v_prev, v_min, &mut out[k..]);
             v_prev = v_min;
         }
-        (v_min, v_max) = simd_merge(V, v_max);
+        (v_min, v_max) = simd_merge(v, v_max);
         k += store_unique(v_prev, v_min, &mut out[k..]);
         v_prev = v_min;
     }
@@ -117,7 +117,7 @@ pub fn or(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     //
     // copy the small end on a tmp buffer
     let mut buffer: [u16; 16] = [0; 16];
-    /// remaining size
+    // remaining size
     let mut rem = store_unique(v_prev, v_max, &mut buffer);
     if i == len1 {
         let n = lhs.len() - 8 * len1;

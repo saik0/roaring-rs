@@ -157,6 +157,7 @@ impl RoaringBitmap {
         BitXorAssign::bitxor_assign(self, other)
     }
 
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
     pub fn or_x86_simd(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
         let mut containers = Vec::new();
 
@@ -172,6 +173,7 @@ impl RoaringBitmap {
         RoaringBitmap { containers }
     }
 
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
     pub fn or_assign_x86_simd(&mut self, rhs: &RoaringBitmap) {
         for container in &rhs.containers {
             let key = container.key;
@@ -182,6 +184,7 @@ impl RoaringBitmap {
         }
     }
 
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
     pub fn and_x86_simd(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
         let mut containers = Vec::new();
 
@@ -197,6 +200,7 @@ impl RoaringBitmap {
         RoaringBitmap { containers }
     }
 
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
     pub fn and_std_simd(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
         let mut containers = Vec::new();
 
@@ -212,6 +216,7 @@ impl RoaringBitmap {
         RoaringBitmap { containers }
     }
 
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
     pub fn and_opt_unsafe(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
         let mut containers = Vec::new();
 
@@ -227,6 +232,7 @@ impl RoaringBitmap {
         RoaringBitmap { containers }
     }
 
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
     pub fn and_assign_walk(&mut self, rhs: &RoaringBitmap) {
         RetainMut::retain_mut(&mut self.containers, |cont| {
             let key = cont.key;
@@ -240,6 +246,7 @@ impl RoaringBitmap {
         })
     }
 
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
     pub fn and_assign_run(&mut self, rhs: &RoaringBitmap) {
         RetainMut::retain_mut(&mut self.containers, |cont| {
             let key = cont.key;
@@ -253,6 +260,7 @@ impl RoaringBitmap {
         })
     }
 
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
     pub fn and_assign_opt_unsafe(&mut self, rhs: &RoaringBitmap) {
         RetainMut::retain_mut(&mut self.containers, |cont| {
             let key = cont.key;
@@ -266,6 +274,7 @@ impl RoaringBitmap {
         })
     }
 
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
     pub fn and_assign_x86_simd(&mut self, rhs: &RoaringBitmap) {
         RetainMut::retain_mut(&mut self.containers, |cont| {
             let key = cont.key;
@@ -279,6 +288,7 @@ impl RoaringBitmap {
         })
     }
 
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
     pub fn and_assign_std_simd(&mut self, rhs: &RoaringBitmap) {
         RetainMut::retain_mut(&mut self.containers, |cont| {
             let key = cont.key;

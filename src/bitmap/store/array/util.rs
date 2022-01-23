@@ -1,9 +1,6 @@
 use std::cmp::Ordering;
 use std::cmp::Ordering::{Equal, Greater, Less};
 
-const MIN_RUN: usize = 3;
-const MIN_GALLOP: usize = 7;
-
 pub fn or_array_walk(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     let mut vec = Vec::new();
 
