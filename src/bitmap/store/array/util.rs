@@ -74,6 +74,44 @@ pub fn or_array_walk_mut(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
     k
 }
 
+pub fn xor_array_walk_mut(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
+    // Traverse both arrays
+    let mut i = 0;
+    let mut j = 0;
+    let mut k = 0;
+    while i < lhs.len() && j < rhs.len() {
+        let a = unsafe { lhs.get_unchecked(i) };
+        let b = unsafe { rhs.get_unchecked(j) };
+        match a.cmp(b) {
+            Less => {
+                out[k] = *a;
+                i += 1;
+            }
+            Greater => {
+                out[k] = *b;
+                j += 1;
+            }
+            Equal => {
+                i += 1;
+                j += 1;
+            }
+        }
+        k += 1;
+    }
+
+    if i < lhs.len() {
+        let n = lhs.len() - i;
+        out[k..k + n].copy_from_slice(&lhs[i..]);
+        k += n;
+    } else if j < rhs.len() {
+        let n = rhs.len() - j;
+        out[k..k + n].copy_from_slice(&rhs[j..]);
+        k += n;
+    }
+
+    k
+}
+
 // #[inline(never)]
 pub fn and_assign_walk(lhs: &mut Vec<u16>, rhs: &[u16]) {
     let mut i = 0;

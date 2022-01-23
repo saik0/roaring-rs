@@ -1,21 +1,14 @@
 use crate::bitmap::store::array::simd::lut::UNIQUE_SHUF;
 use crate::bitmap::store::array::util::or_array_walk_mut;
 use crate::simd::compat::{swizzle_u16x8, to_bitmask};
-use crate::simd::util::{lanes_max, lanes_min, load_unchecked, store_unchecked};
+use crate::simd::util;
+use crate::simd::util::{load_unchecked, simd_merge, store_unchecked, Shr1};
 use std::mem;
-use std::simd::{u16x8, Simd};
+use std::simd::{u16x8, Simd, Swizzle2};
 
 #[inline]
 fn store_unique(old: u16x8, newval: u16x8, output: &mut [u16]) -> usize {
-    use std::simd::{Swizzle2, Which, Which::First as A, Which::Second as B};
-
-    /// A static swizzle
-    struct UniqueSwizzle;
-    impl Swizzle2<8, 8> for UniqueSwizzle {
-        const INDEX: [Which; 8] = [B(7), A(0), A(1), A(2), A(3), A(4), A(5), A(6)];
-    }
-
-    let tmp: u16x8 = UniqueSwizzle::swizzle2(newval, old);
+    let tmp: u16x8 = Shr1::swizzle2(newval, old);
     let mask: usize = to_bitmask(tmp.lanes_eq(newval));
     let count: usize = 8 - mask.count_ones() as usize;
     let key: u16x8 =
@@ -25,25 +18,6 @@ fn store_unique(old: u16x8, newval: u16x8, output: &mut [u16]) -> usize {
         store_unchecked(val, output);
     }
     count
-}
-
-/// Assuming that a and b are sorted, returns a tuple of sorted output.
-/// Developed originally for merge sort using SIMD instructions.
-/// Standard merge. See, e.g., Inoue and Taura, SIMD- and Cache-Friendly
-/// Algorithm for Sorting an Array of Structures
-pub fn simd_merge(a: u16x8, b: u16x8) -> (u16x8, u16x8) {
-    let mut tmp: u16x8 = lanes_min(a, b);
-    let mut max: u16x8 = lanes_max(a, b);
-    tmp = tmp.rotate_lanes_left::<1>();
-    let mut min: u16x8 = lanes_min(tmp, max);
-    for _ in 0..6 {
-        max = lanes_max(tmp, max);
-        tmp = min.rotate_lanes_left::<1>();
-        min = lanes_min(tmp, max);
-    }
-    max = lanes_max(tmp, max);
-    min = min.rotate_lanes_left::<1>();
-    (min, max)
 }
 
 /// De-duplicates `slice` in place
@@ -104,11 +78,11 @@ pub fn or(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
                     break;
                 }
             }
-            (v_min, v_max) = simd_merge(v, v_max);
+            (v_min, v_max) = util::simd_merge(v, v_max);
             k += store_unique(v_prev, v_min, &mut out[k..]);
             v_prev = v_min;
         }
-        (v_min, v_max) = simd_merge(v, v_max);
+        (v_min, v_max) = util::simd_merge(v, v_max);
         k += store_unique(v_prev, v_min, &mut out[k..]);
         v_prev = v_min;
     }

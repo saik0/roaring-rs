@@ -85,3 +85,34 @@ pub fn matrix_cmp(a: u16x8, b: u16x8) -> mask16x8 {
         | a.lanes_eq(b.rotate_lanes_left::<6>())
         | a.lanes_eq(b.rotate_lanes_left::<7>())
 }
+
+use std::simd::{Swizzle2, Which, Which::First as A, Which::Second as B};
+
+pub struct Shr1;
+impl Swizzle2<8, 8> for Shr1 {
+    const INDEX: [Which; 8] = [B(7), A(0), A(1), A(2), A(3), A(4), A(5), A(6)];
+}
+
+pub struct Shr2;
+impl Swizzle2<8, 8> for Shr2 {
+    const INDEX: [Which; 8] = [B(6), B(7), A(0), A(1), A(2), A(3), A(4), A(5)];
+}
+
+/// Assuming that a and b are sorted, returns a tuple of sorted output.
+/// Developed originally for merge sort using SIMD instructions.
+/// Standard merge. See, e.g., Inoue and Taura, SIMD- and Cache-Friendly
+/// Algorithm for Sorting an Array of Structures
+pub fn simd_merge(a: u16x8, b: u16x8) -> (u16x8, u16x8) {
+    let mut tmp: u16x8 = lanes_min(a, b);
+    let mut max: u16x8 = lanes_max(a, b);
+    tmp = tmp.rotate_lanes_left::<1>();
+    let mut min: u16x8 = lanes_min(tmp, max);
+    for _ in 0..6 {
+        max = lanes_max(tmp, max);
+        tmp = min.rotate_lanes_left::<1>();
+        min = lanes_min(tmp, max);
+    }
+    max = lanes_max(tmp, max);
+    min = min.rotate_lanes_left::<1>();
+    (min, max)
+}

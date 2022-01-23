@@ -298,64 +298,13 @@ impl BitXor<Self> for &ArrayStore {
     type Output = ArrayStore;
 
     fn bitxor(self, rhs: Self) -> Self::Output {
-        let mut vec = Vec::new();
-
-        // Traverse both arrays
-        let mut i = 0;
-        let mut j = 0;
-        while i < self.vec.len() && j < rhs.vec.len() {
-            let a = unsafe { self.vec.get_unchecked(i) };
-            let b = unsafe { rhs.vec.get_unchecked(j) };
-            match a.cmp(b) {
-                Less => {
-                    vec.push(*a);
-                    i += 1;
-                }
-                Greater => {
-                    vec.push(*b);
-                    j += 1;
-                }
-                Equal => {
-                    i += 1;
-                    j += 1;
-                }
-            }
-        }
-
-        // Store remaining elements of the arrays
-        vec.extend_from_slice(&self.vec[i..]);
-        vec.extend_from_slice(&rhs.vec[j..]);
-
-        ArrayStore { vec }
+        xor_array_array_cur(self, rhs)
     }
 }
 
 impl BitXorAssign<&Self> for ArrayStore {
     fn bitxor_assign(&mut self, rhs: &Self) {
-        let mut i1 = 0usize;
-        let mut iter2 = rhs.vec.iter();
-        let mut current2 = iter2.next();
-        while i1 < self.vec.len() {
-            match current2.map(|c2| self.vec[i1].cmp(c2)) {
-                None => break,
-                Some(Less) => {
-                    i1 += 1;
-                }
-                Some(Greater) => {
-                    self.vec.insert(i1, *current2.unwrap());
-                    i1 += 1;
-                    current2 = iter2.next();
-                }
-                Some(Equal) => {
-                    self.vec.remove(i1);
-                    current2 = iter2.next();
-                }
-            }
-        }
-        if let Some(current) = current2 {
-            self.vec.push(*current);
-            self.vec.extend(iter2.cloned());
-        }
+        xor_assign_array_array_cur(self, rhs)
     }
 }
 
@@ -526,6 +475,76 @@ pub fn sub_assign_x86_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
         let mut vec = super::array::simd::x86::sub_x86_simd(lhs.as_slice(), rhs.as_slice());
         std::mem::swap(&mut lhs.vec, &mut vec);
     }
+}
+
+fn xor_array_array_cur(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
+    let mut vec = Vec::new();
+
+    // Traverse both arrays
+    let mut i = 0;
+    let mut j = 0;
+    while i < lhs.vec.len() && j < rhs.vec.len() {
+        let a = unsafe { lhs.vec.get_unchecked(i) };
+        let b = unsafe { rhs.vec.get_unchecked(j) };
+        match a.cmp(b) {
+            Less => {
+                vec.push(*a);
+                i += 1;
+            }
+            Greater => {
+                vec.push(*b);
+                j += 1;
+            }
+            Equal => {
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+
+    // Store remaining elements of the arrays
+    vec.extend_from_slice(&lhs.vec[i..]);
+    vec.extend_from_slice(&rhs.vec[j..]);
+
+    ArrayStore { vec }
+}
+
+pub fn xor_assign_array_array_cur(lhs: &mut ArrayStore, rhs: &ArrayStore) {
+    let mut i1 = 0usize;
+    let mut iter2 = rhs.vec.iter();
+    let mut current2 = iter2.next();
+    while i1 < lhs.vec.len() {
+        match current2.map(|c2| lhs.vec[i1].cmp(c2)) {
+            None => break,
+            Some(Less) => {
+                i1 += 1;
+            }
+            Some(Greater) => {
+                lhs.vec.insert(i1, *current2.unwrap());
+                i1 += 1;
+                current2 = iter2.next();
+            }
+            Some(Equal) => {
+                lhs.vec.remove(i1);
+                current2 = iter2.next();
+            }
+        }
+    }
+    if let Some(current) = current2 {
+        lhs.vec.push(*current);
+        lhs.vec.extend(iter2.cloned());
+    }
+}
+
+pub fn xor_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
+    let mut x = lhs.clone();
+    xor_assign_simd(&mut x, rhs);
+    x
+}
+
+pub fn xor_assign_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
+    let mut vec = super::array::simd::xor(lhs.as_slice(), rhs.as_slice());
+    std::mem::swap(&mut lhs.vec, &mut vec);
 }
 
 #[cfg(test)]
