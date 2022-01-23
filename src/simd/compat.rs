@@ -53,7 +53,6 @@ pub fn swizzle_u16x8(a: u16x8, b: u16x8) -> u16x8 {
 #[allow(unreachable_code)]
 #[inline]
 pub fn to_bitmask(mask: mask16x8) -> usize {
-    
     #[cfg(target_feature = "sse2")]
     unsafe {
         #[cfg(target_arch = "x86")]

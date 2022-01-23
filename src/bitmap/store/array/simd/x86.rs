@@ -481,11 +481,11 @@ unsafe fn _difference_vector_x86(
 
     if (i_a < st_a) && (i_b < st_b) {
         // this is the vectorized code path
-        
-         //, v_bmax;
-                              // we load a vector from A and a vector from B
-                              // v_a = _mm_lddqu_si128((__m128i *)&A[i_a]);
-                              // v_b = _mm_lddqu_si128((__m128i *)&B[i_b]);
+
+        //, v_bmax;
+        // we load a vector from A and a vector from B
+        // v_a = _mm_lddqu_si128((__m128i *)&A[i_a]);
+        // v_b = _mm_lddqu_si128((__m128i *)&B[i_b]);
         let mut v_a: __m128i = _mm_lddqu_si128(A.add(i_a).cast::<__m128i>());
         let mut v_b: __m128i = _mm_lddqu_si128(B.add(i_b).cast::<__m128i>());
         // we have a runningmask which indicates which values from A have been
