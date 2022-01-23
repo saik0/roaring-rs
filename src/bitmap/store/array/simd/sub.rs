@@ -3,19 +3,13 @@ use crate::bitmap::store::array::simd::lut::SHUFFLE_MASK;
 // A shim until we rewrite method args / return type
 pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     let mut out = vec![0; lhs.len().max(rhs.len()) + 4096];
-    let len = unsafe {
-        _difference_vector_x86(lhs, rhs,out.as_mut_ptr())
-    };
+    let len = unsafe { _difference_vector_x86(lhs, rhs, out.as_mut_ptr()) };
     out.truncate(len);
     out
 }
 
 /// Caller must ensure does not alias A or B
-unsafe fn _difference_vector_x86(
-    mut lhs: &[u16],
-    mut rhs: &[u16],
-    out: *mut u16,
-) -> usize {
+unsafe fn _difference_vector_x86(mut lhs: &[u16], mut rhs: &[u16], out: *mut u16) -> usize {
     use std::arch::x86_64::{
         __m128i, _mm_cmpistrm, _mm_extract_epi32, _mm_lddqu_si128, _mm_load_si128, _mm_loadu_si128,
         _mm_or_si128, _mm_setzero_si128, _mm_shuffle_epi8, _mm_storeu_si128, _SIDD_BIT_MASK,

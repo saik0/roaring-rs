@@ -1,35 +1,9 @@
 use crate::bitmap::store::array::simd::lut::SHUFFLE_MASK;
 use crate::simd::compat::{swizzle_u16x8, to_bitmask};
-use crate::simd::util::{load_unchecked, store_unchecked};
+use crate::simd::util::{load_unchecked, matrix_cmp, store_unchecked};
 use mem::transmute;
 use std::mem;
 use std::simd::{u16x8, u8x16};
-
-/// Compare all lanes in `a` to all lanes in `b`
-///
-/// A bit in the result mask will be set if any lane at `a[i]` is in any lane of `b`
-///
-/// ### Example
-/// ```ignore
-/// let a = Simd::from_array([1, 2, 3, 4, 32, 33, 34, 35]);
-/// let b = Simd::from_array([2, 4, 6, 8, 10, 12, 14, 16]);
-/// let result = cmp_all_all(a, b);
-/// assert_eq!(result, 0b00001010);
-/// ```
-#[inline]
-// TODO write with generics and put in util
-fn matrix_cmp(a: u16x8, b: u16x8) -> usize {
-    let mut res = a.lanes_eq(b);
-    res |= a.lanes_eq(b.rotate_lanes_left::<1>());
-    res |= a.lanes_eq(b.rotate_lanes_left::<2>());
-    res |= a.lanes_eq(b.rotate_lanes_left::<3>());
-    res |= a.lanes_eq(b.rotate_lanes_left::<4>());
-    res |= a.lanes_eq(b.rotate_lanes_left::<5>());
-    res |= a.lanes_eq(b.rotate_lanes_left::<6>());
-    res |= a.lanes_eq(b.rotate_lanes_left::<7>());
-    // TODO return a simd mask
-    to_bitmask(res)
-}
 
 // From Schlegel et al., Fast Sorted-Set Intersection using SIMD Instructions
 //
@@ -54,7 +28,7 @@ pub fn and(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
         let mut v_a: u16x8 = unsafe { load_unchecked(&lhs[i..]) };
         let mut v_b: u16x8 = unsafe { load_unchecked(&rhs[j..]) };
         loop {
-            let r = matrix_cmp(v_a, v_b);
+            let r = to_bitmask(matrix_cmp(v_a, v_b));
 
             // Safety:
             //  * r is guaranteed to be 1 byte at most.

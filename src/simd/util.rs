@@ -4,7 +4,7 @@
 //!
 //! functions that are generally useful, but not part of std
 
-use std::simd::{LaneCount, Simd, SimdElement, SupportedLaneCount};
+use std::simd::{mask16x8, u16x8, LaneCount, Simd, SimdElement, SupportedLaneCount};
 
 /// compute the min for each lane in `a` and `b`
 #[inline]
@@ -60,4 +60,28 @@ where
     LaneCount<LANES>: SupportedLaneCount,
 {
     unsafe { std::ptr::read_unaligned(src as *const _ as *const Simd<U, LANES>) }
+}
+
+/// Compare all lanes in `a` to all lanes in `b`
+///
+/// A bit in the result mask will be set if any lane at `a[i]` is in any lane of `b`
+///
+/// ### Example
+/// ```ignore
+/// let a = Simd::from_array([1, 2, 3, 4, 32, 33, 34, 35]);
+/// let b = Simd::from_array([2, 4, 6, 8, 10, 12, 14, 16]);
+/// let result = matrix_cmp(a, b);
+/// assert_eq!(result, 0b00001010);
+/// ```
+#[inline]
+// TODO write with generics
+pub fn matrix_cmp(a: u16x8, b: u16x8) -> mask16x8 {
+    a.lanes_eq(b)
+        | a.lanes_eq(b.rotate_lanes_left::<1>())
+        | a.lanes_eq(b.rotate_lanes_left::<2>())
+        | a.lanes_eq(b.rotate_lanes_left::<3>())
+        | a.lanes_eq(b.rotate_lanes_left::<4>())
+        | a.lanes_eq(b.rotate_lanes_left::<5>())
+        | a.lanes_eq(b.rotate_lanes_left::<6>())
+        | a.lanes_eq(b.rotate_lanes_left::<7>())
 }
