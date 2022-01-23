@@ -1,4 +1,5 @@
 extern crate roaring;
+
 use roaring::RoaringBitmap;
 
 #[test]
@@ -71,4 +72,25 @@ fn xor() {
     rb1 ^= rb3;
 
     assert_eq!(rb4, rb1);
+}
+
+// Edge case for 128 bit SIMD
+#[test]
+fn xor_self_len_8() {
+    let rb1 = (0..7).collect::<RoaringBitmap>();
+
+    let rb2 = &rb1 ^ &rb1;
+
+    assert_eq!(RoaringBitmap::new(), rb2);
+}
+
+// Edge case for 128 bit SIMD
+#[test]
+fn xor_combined_len_8192() {
+    let rb1 = (0..4096).collect::<RoaringBitmap>();
+    let rb2 = (4096..8192).collect::<RoaringBitmap>();
+
+    let rb3 = &rb1 ^ &rb2;
+
+    assert_eq!((0..8192).collect::<RoaringBitmap>(), rb3);
 }

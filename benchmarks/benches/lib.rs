@@ -953,8 +953,8 @@ criterion_group!(
     // successive_or,
 );
 
-// criterion_group!(ops, and, or, xor, sub);
-criterion_group!(ops, or2);
+criterion_group!(ops, and, or, xor, sub);
+// criterion_group!(ops, or2);
 
 criterion_group!(create, creation);
 

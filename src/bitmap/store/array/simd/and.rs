@@ -1,9 +1,9 @@
 use crate::bitmap::store::array::simd::lut::SHUFFLE_MASK;
 use crate::simd::compat::{swizzle_u16x8, to_bitmask};
-use crate::simd::util::{load_unchecked, matrix_cmp, store_unchecked};
+use crate::simd::util::{matrix_cmp, store};
 use mem::transmute;
 use std::mem;
-use std::simd::{u16x8, u8x16};
+use std::simd::{u16x8, u8x16, Simd};
 
 // From Schlegel et al., Fast Sorted-Set Intersection using SIMD Instructions
 //
@@ -25,15 +25,15 @@ pub fn and(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     if (i < st_a) && (j < st_b) {
         // Safety:
         //  * Unchecked loads fom lhs[i..] and rhs[j..] are safe given i < st_a && j < st_b
-        let mut v_a: u16x8 = unsafe { load_unchecked(&lhs[i..]) };
-        let mut v_b: u16x8 = unsafe { load_unchecked(&rhs[j..]) };
+        let mut v_a: u16x8 = Simd::from_slice(&lhs[i..]);
+        let mut v_b: u16x8 = Simd::from_slice(&rhs[j..]);
         loop {
             let r = to_bitmask(matrix_cmp(v_a, v_b));
 
             // Safety:
             //  * r is guaranteed to be 1 byte at most.
             //    256 * 16 == 4096, which is the len of SHUFFLE_MASK
-            let key: u8x16 = unsafe { load_unchecked(&SHUFFLE_MASK[r * 16..]) };
+            let key: u8x16 = Simd::from_slice(&SHUFFLE_MASK[r * 16..]);
 
             // Safety:
             //  * These types are the same size.
@@ -43,13 +43,13 @@ pub fn and(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
 
             // Safety:
             //  * Unchecked store to out[k..] k is always <= i or j
-            unsafe { store_unchecked(intersection, &mut out[k..]) };
+            store(intersection, &mut out[k..]);
             k += r.count_ones() as usize;
 
             // Safety:
             //  * Must be in bounds given i < st_a && j < st_b checks
-            let a_max: u16 = unsafe { *lhs.get_unchecked(i + VEC_LEN - 1) };
-            let b_max: u16 = unsafe { *rhs.get_unchecked(j + VEC_LEN - 1) };
+            let a_max: u16 = lhs[i + VEC_LEN - 1];
+            let b_max: u16 = rhs[j + VEC_LEN - 1];
             if a_max <= b_max {
                 i += VEC_LEN;
                 if i == st_a {
@@ -57,7 +57,7 @@ pub fn and(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
                 }
                 // Safety:
                 //  * Unchecked loads fom lhs[i..] is save given i != st_a
-                v_a = unsafe { load_unchecked(&lhs[i..]) };
+                v_a = Simd::from_slice(&lhs[i..]);
             }
             if b_max <= a_max {
                 j += VEC_LEN;
@@ -66,7 +66,7 @@ pub fn and(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
                 }
                 // Safety:
                 //  * Unchecked loads fom rhs[j..] is save given j != st_b
-                v_b = unsafe { load_unchecked(&rhs[j..]) };
+                v_b = Simd::from_slice(&rhs[j..]);
             }
         }
     }
@@ -77,8 +77,8 @@ pub fn and(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     //  * Unchecked indexing safe given the condition of the loop
 
     while i < lhs.len() && j < rhs.len() {
-        let a: u16 = unsafe { *lhs.get_unchecked(i) };
-        let b: u16 = unsafe { *rhs.get_unchecked(j) };
+        let a: u16 = lhs[i];
+        let b: u16 = rhs[j];
 
         // Match arms can be reordered and this is a performance sensitive loop
         #[allow(clippy::comparison_chain)]
@@ -87,7 +87,7 @@ pub fn and(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
         } else if a > b {
             j += 1;
         } else {
-            *unsafe { out.get_unchecked_mut(k) } = a; //==b;
+            out[k] = a; //==b;
             k += 1;
             i += 1;
             j += 1;

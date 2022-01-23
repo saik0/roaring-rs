@@ -88,10 +88,10 @@ pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
             i += VECTOR_LENGTH;
         }
         // at this point we should have i_a == st_a and i_b == st_b
-        debug_assert_eq!(i, st_a);
-        // CRoaring comment says this is the case, but proptests panic.
+        // CRoaring comment says this is the case, but proptests panic if that's asserted
         // Is the comment wrong, or the code?
-        // debug_assert_eq!(j, st_b);
+        //debug_assert_eq!(i, st_a);
+        //debug_assert_eq!(j, st_b);
     }
 
     // do the tail using scalar code

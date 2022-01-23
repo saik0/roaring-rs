@@ -86,17 +86,18 @@ pub fn xor_array_walk_mut(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
             Less => {
                 out[k] = *a;
                 i += 1;
+                k += 1;
             }
             Greater => {
                 out[k] = *b;
                 j += 1;
+                k += 1;
             }
             Equal => {
                 i += 1;
                 j += 1;
             }
         }
-        k += 1;
     }
 
     if i < lhs.len() {

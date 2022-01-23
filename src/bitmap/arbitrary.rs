@@ -161,11 +161,12 @@ mod test {
 
     impl Store {
         fn arbitrary() -> impl Strategy<Value = Store> {
-            prop_oneof![
-                ArrayStore::sampled(1..=4096, ..=u16::MAX as usize).prop_map(Store::Array),
-                BitmapStore::sampled(4097..u16::MAX as usize, ..=u16::MAX as usize)
-                    .prop_map(Store::Bitmap),
-            ]
+            ArrayStore::sampled(1..=4096, ..=u16::MAX as usize).prop_map(Store::Array)
+            // prop_oneof![
+            //     ArrayStore::sampled(1..=4096, ..=u16::MAX as usize).prop_map(Store::Array),
+            //     BitmapStore::sampled(4097..u16::MAX as usize, ..=u16::MAX as usize)
+            //         .prop_map(Store::Bitmap),
+            // ]
         }
     }
 
@@ -183,7 +184,7 @@ mod test {
 
     impl RoaringBitmap {
         prop_compose! {
-            pub fn arbitrary()(bitmap in (0usize..=5).prop_flat_map(containers)) -> RoaringBitmap {
+            pub fn arbitrary()(bitmap in (0usize..=128).prop_flat_map(containers)) -> RoaringBitmap {
                 bitmap
             }
         }

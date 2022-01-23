@@ -83,6 +83,34 @@ mod test {
                 prop_assert_eq!(x, y);
             }
         }
+
+        #[test]
+        fn symmetric_differences_are_commutative(
+            a in RoaringBitmap::arbitrary(),
+            b in RoaringBitmap::arbitrary()
+        ) {
+            prop_assert_eq!(&a ^ &b, &b ^ &a);
+
+            { // op_assign_ref
+                let mut x = a.clone();
+                let mut y = b.clone();
+
+                x ^= &b;
+                y ^= &a;
+
+                prop_assert_eq!(x, y);
+            }
+
+            { // op_assign_own
+                let mut x = a.clone();
+                let mut y = b.clone();
+
+                x ^= b.clone();
+                y ^= a.clone();
+
+                prop_assert_eq!(x, y);
+            }
+        }
     }
 
     //
@@ -160,6 +188,44 @@ mod test {
                 let mut y = a.clone();
                 y &= b.clone();
                 y &= c.clone();
+
+
+                prop_assert_eq!(x, y);
+            }
+        }
+
+        #[test]
+        fn symmetric_differences_are_associative(
+            a in RoaringBitmap::arbitrary(),
+            b in RoaringBitmap::arbitrary(),
+            c in RoaringBitmap::arbitrary()
+        ) {
+            prop_assert_eq!(
+                &a ^ ( &b ^ &c ),
+                ( &a ^ &b ) ^ &c
+            );
+
+            { // op_assign_ref
+                let mut x = b.clone();
+                x ^= &c;
+                x ^= &a;
+
+                let mut y = a.clone();
+                y ^= &b;
+                y ^= &c;
+
+
+                prop_assert_eq!(x, y);
+            }
+
+            { // op_assign_own
+                let mut x = b.clone();
+                x ^= c.clone();
+                x ^= a.clone();
+
+                let mut y = a.clone();
+                y ^= b.clone();
+                y ^= c.clone();
 
 
                 prop_assert_eq!(x, y);
@@ -273,6 +339,57 @@ mod test {
                 prop_assert_eq!(x, y);
             }
         }
+
+        #[test]
+        fn intersection_distributes_over_symmetric_difference(
+            a in RoaringBitmap::arbitrary(),
+            b in RoaringBitmap::arbitrary(),
+            c in RoaringBitmap::arbitrary()
+        ) {
+            prop_assert_eq!(
+                &a & ( &b ^ &c),
+                ( &a & &b ) ^ ( &a & &c )
+            );
+
+            { // op_assign_ref
+                let mut x = b.clone();
+                x ^= &c;
+                x &= &a;
+
+                let y = {
+                    let mut ab = a.clone();
+                    ab &= &b;
+
+                    let mut ac = a.clone();
+                    ac &= &c;
+
+                    ab ^= &ac;
+                    ab
+                };
+
+                prop_assert_eq!(x, y);
+            }
+
+            { // op_assign_own
+                let mut x = b.clone();
+                x ^= c.clone();
+                x &= a.clone();
+
+                let y = {
+                    let mut ab = a.clone();
+                    ab &= b.clone();
+
+                    let mut ac = a.clone();
+                    ac &= c.clone();
+
+                    // moves the owned ac on the rhs
+                    ab ^= ac;
+                    ab
+                };
+
+                prop_assert_eq!(x, y);
+            }
+        }
     }
 
     // Identity:
@@ -294,6 +411,26 @@ mod test {
                 let mut x = a.clone();
                 // empty_set() returns an owned empty set
                 x |= empty_set();
+
+                prop_assert_eq!(x, a.clone());
+            }
+        }
+
+        #[test]
+        fn the_empty_set_is_the_identity_for_symmetric_difference(a in RoaringBitmap::arbitrary()) {
+            prop_assert_eq!(&(&a ^ &empty_set()), &a);
+
+            { // op_assign_ref
+                let mut x = a.clone();
+                x ^= &empty_set();
+
+                prop_assert_eq!(x, a.clone());
+            }
+
+            { // op_assign_own
+                let mut x = a.clone();
+                // empty_set() returns an owned empty set
+                x ^= empty_set();
 
                 prop_assert_eq!(x, a.clone());
             }
@@ -391,8 +528,7 @@ mod test {
             let mut b = a.clone();
             prop_assert_eq!(&a, &b);
             prop_assert!(a.is_subset(&b) && b.is_subset(&a));
-
-            b.insert(a.max().unwrap_or(0) + 1);
+            b.insert(a.max().unwrap_or(0).wrapping_add(1));
             prop_assert_ne!(&a, &b);
             prop_assert!(!(a.is_subset(&b) && b.is_subset(&a)));
         }
@@ -508,6 +644,62 @@ mod test {
             prop_assert_eq!(
                 &a - &u,
                 empty_set()
+            );
+        }
+    }
+
+    // Additional properties of symmetric differences
+    // ==============================================
+    //
+
+    proptest! {
+        #[test]
+        fn symmetric_difference_triangle_inequality(
+            a in RoaringBitmap::arbitrary(),
+            b in RoaringBitmap::arbitrary(),
+            c in RoaringBitmap::arbitrary()
+        ) {
+            prop_assert_eq!(
+                &((&a ^ &b) ^ (&b ^ &c)),
+                &(a ^ &c)
+            );
+        }
+
+        #[test]
+        fn symmetric_difference_empty_set_neutral(
+            a in RoaringBitmap::arbitrary()
+        ) {
+            prop_assert_eq!(
+                &(&a ^ &empty_set()),
+                &a
+            );
+        }
+
+        #[test]
+        fn symmetric_difference_inverse_of_itself(
+            a in RoaringBitmap::arbitrary()
+        ) {
+
+            prop_assert_eq!(
+                &(&a ^ &a),
+                &empty_set()
+            );
+        }
+
+        #[test]
+        fn symmetric_difference_relative_compliments(
+            a in RoaringBitmap::arbitrary(),
+            b in RoaringBitmap::arbitrary()
+        ) {
+
+            prop_assert_eq!(
+                &(&a ^ &b),
+                &(&(&a - &b) | &(&b - &a))
+            );
+
+            prop_assert_eq!(
+                &(&a ^ &b),
+                &(&(&a | &b) - &(&a & &b))
             );
         }
     }
