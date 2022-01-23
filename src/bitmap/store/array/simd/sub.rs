@@ -1,4 +1,6 @@
 use crate::bitmap::store::array::simd::lut::SHUFFLE_MASK;
+use crate::simd::compat::to_bitmask;
+use crate::simd::util::matrix_cmp;
 
 // A shim until we rewrite method args / return type
 pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
@@ -11,14 +13,11 @@ pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
 /// Caller must ensure does not alias A or B
 unsafe fn _difference_vector_x86(mut lhs: &[u16], mut rhs: &[u16], out: *mut u16) -> usize {
     use std::arch::x86_64::{
-        __m128i, _mm_cmpistrm, _mm_extract_epi32, _mm_lddqu_si128, _mm_load_si128, _mm_loadu_si128,
-        _mm_or_si128, _mm_setzero_si128, _mm_shuffle_epi8, _mm_storeu_si128, _SIDD_BIT_MASK,
-        _SIDD_CMP_EQUAL_ANY, _SIDD_UWORD_OPS,
+        __m128i, _mm_lddqu_si128, _mm_load_si128, _mm_loadu_si128, _mm_shuffle_epi8,
+        _mm_storeu_si128,
     };
     use std::mem;
     use std::ptr::{copy_nonoverlapping, write_bytes};
-
-    const CMPESTRM_CTRL: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;
     const VECTOR_LENGTH: usize = mem::size_of::<__m128i>() / mem::size_of::<u16>();
 
     let mut lhs_len = lhs.len();
@@ -73,7 +72,7 @@ unsafe fn _difference_vector_x86(mut lhs: &[u16], mut rhs: &[u16], out: *mut u16
             let mut v_b: __m128i = _mm_lddqu_si128(rhs.as_ptr().add(i_b).cast::<__m128i>());
             // we have a runningmask which indicates which values from A have been
             // spotted in B, these don't get written out.
-            let mut runningmask_a_found_in_b: __m128i = _mm_setzero_si128();
+            let mut runningmask_a_found_in_b: usize = 0;
             /****
              * start of the main vectorized loop
              *****/
@@ -81,8 +80,8 @@ unsafe fn _difference_vector_x86(mut lhs: &[u16], mut rhs: &[u16], out: *mut u16
                 // afoundinb will contain a mask indicate for each entry in A
                 // whether it is seen
                 // in B
-                let a_found_in_b: __m128i = _mm_cmpistrm::<CMPESTRM_CTRL>(v_b, v_a);
-                runningmask_a_found_in_b = _mm_or_si128(runningmask_a_found_in_b, a_found_in_b);
+                let a_found_in_b: usize = to_bitmask(matrix_cmp(v_a.into(), v_b.into()));
+                runningmask_a_found_in_b |= a_found_in_b;
                 // we always compare the last values of A and B
                 // const uint16_t a_max = A[i_a + vectorlength - 1];
                 // const uint16_t b_max = B[i_b + vectorlength - 1];
@@ -92,15 +91,11 @@ unsafe fn _difference_vector_x86(mut lhs: &[u16], mut rhs: &[u16], out: *mut u16
                     // Ok. In this code path, we are ready to write our v_a
                     // because there is no need to read more from B, they will
                     // all be large values.
-                    let bitmask_belongs_to_difference =
-                        _mm_extract_epi32::<0>(runningmask_a_found_in_b) ^ 0xFF;
+                    let bitmask_belongs_to_difference = runningmask_a_found_in_b ^ 0xFF;
                     /*** next few lines are probably expensive *****/
                     // TODO aligned
                     let sm16: __m128i = _mm_loadu_si128(
-                        SHUFFLE_MASK
-                            .as_ptr()
-                            .cast::<__m128i>()
-                            .offset(bitmask_belongs_to_difference as isize),
+                        SHUFFLE_MASK.as_ptr().cast::<__m128i>().add(bitmask_belongs_to_difference),
                     );
                     let p: __m128i = _mm_shuffle_epi8(v_a, sm16);
                     _mm_storeu_si128(out.add(count).cast::<__m128i>(), p); // can overflow
@@ -111,7 +106,7 @@ unsafe fn _difference_vector_x86(mut lhs: &[u16], mut rhs: &[u16], out: *mut u16
                         // no more
                         break;
                     }
-                    runningmask_a_found_in_b = _mm_setzero_si128();
+                    runningmask_a_found_in_b = 0;
                     // v_a = _mm_lddqu_si128((__m128i *)&A[i_a]);
                     v_a = _mm_lddqu_si128(lhs.as_ptr().add(i_a).cast::<__m128i>());
                 }
@@ -135,15 +130,11 @@ unsafe fn _difference_vector_x86(mut lhs: &[u16], mut rhs: &[u16], out: *mut u16
                 write_bytes(buffer.as_mut_ptr(), 0, 8);
                 copy_nonoverlapping(rhs.as_ptr().add(i_b), buffer.as_mut_ptr(), rhs_len - i_b);
                 v_b = _mm_lddqu_si128(buffer.as_ptr().cast());
-                let a_found_in_b: __m128i = _mm_cmpistrm::<CMPESTRM_CTRL>(v_b, v_a);
-                runningmask_a_found_in_b = _mm_or_si128(runningmask_a_found_in_b, a_found_in_b);
-                let bitmask_belongs_to_difference: i32 =
-                    _mm_extract_epi32::<0>(runningmask_a_found_in_b) ^ 0xFF;
+                let a_found_in_b: usize = to_bitmask(matrix_cmp(v_a.into(), v_b.into()));
+                runningmask_a_found_in_b |= a_found_in_b;
+                let bitmask_belongs_to_difference: usize = runningmask_a_found_in_b ^ 0xFF;
                 let sm16: __m128i = _mm_load_si128(
-                    SHUFFLE_MASK
-                        .as_ptr()
-                        .cast::<__m128i>()
-                        .offset(bitmask_belongs_to_difference as isize),
+                    SHUFFLE_MASK.as_ptr().cast::<__m128i>().add(bitmask_belongs_to_difference),
                 );
                 let p: __m128i = _mm_shuffle_epi8(v_a, sm16);
                 _mm_storeu_si128(out.add(count).cast::<__m128i>(), p); // can overflow
