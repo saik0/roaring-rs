@@ -373,8 +373,11 @@ pub fn or_x86_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
 }
 
 pub fn or_assign_x86_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
-    let mut vec = super::array::simd::x86::or_x86_simd(lhs.as_slice(), rhs.as_slice());
-    std::mem::swap(&mut lhs.vec, &mut vec);
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        let mut vec = super::array::simd::x86::or_x86_simd(lhs.as_slice(), rhs.as_slice());
+        std::mem::swap(&mut lhs.vec, &mut vec);
+    }
 }
 
 pub fn or_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
@@ -518,8 +521,11 @@ pub fn sub_x86_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
 }
 
 pub fn sub_assign_x86_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
-    let mut vec = super::array::simd::x86::sub_x86_simd(lhs.as_slice(), rhs.as_slice());
-    std::mem::swap(&mut lhs.vec, &mut vec);
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        let mut vec = super::array::simd::x86::sub_x86_simd(lhs.as_slice(), rhs.as_slice());
+        std::mem::swap(&mut lhs.vec, &mut vec);
+    }
 }
 
 #[cfg(test)]

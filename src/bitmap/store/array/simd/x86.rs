@@ -1,3 +1,4 @@
+#![cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 // Prefer to let the translated C to look close to the original for easy of comparison
 #![allow(non_snake_case)]
 #![allow(non_upper_case_globals)]
