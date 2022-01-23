@@ -5,7 +5,7 @@ use std::mem;
 use std::simd::{u16x8, u8x16, Simd};
 
 /// Caller must ensure does not alias A or B
-pub fn sub(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
+pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     const VECTOR_LENGTH: usize = mem::size_of::<u16x8>() / mem::size_of::<u16>();
 
     // we handle the degenerate case
@@ -17,35 +17,13 @@ pub fn sub(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
         return lhs.to_vec();
     }
 
-    let mut lhs_len = lhs.len();
-    let mut rhs_len = rhs.len();
+    let lhs_len = lhs.len();
+    let rhs_len = rhs.len();
 
     let mut out = vec![0; lhs.len().max(rhs.len()) + 4096];
-
-    // handle the leading zeroes, it is messy but it allows us to use the fast
-    // _mm_cmpistrm instrinsic safely
     let mut count = 0;
-    if (lhs[0] == 0) || (rhs[0] == 0) {
-        if (lhs[0] == 0) && (rhs[0] == 0) {
-            lhs = &lhs[1..];
-            lhs_len -= 1;
-            rhs = &rhs[1..];
-            rhs_len -= 1;
-        } else if lhs[0] == 0 {
-            out[count] = 0;
-            count += 1;
-            lhs = &lhs[1..];
-            lhs_len -= 1;
-        } else {
-            rhs = &rhs[1..];
-            rhs_len -= 1;
-        }
-    }
-    // at this point, we have two non-empty arrays, made of non-zero
-    // increasing values.
     let mut i_a = 0;
     let mut i_b = 0;
-
     let st_a = (lhs_len / VECTOR_LENGTH) * VECTOR_LENGTH;
     let st_b = (rhs_len / VECTOR_LENGTH) * VECTOR_LENGTH;
 
