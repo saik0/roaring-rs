@@ -7,4 +7,4 @@ mod xor;
 
 pub use and::and;
 pub use or::or;
-//pub use sub::sub;
+pub use sub::sub;

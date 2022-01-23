@@ -278,13 +278,13 @@ impl Sub<Self> for &ArrayStore {
     type Output = ArrayStore;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        sub_x86_simd(self, rhs)
+        sub_simd(self, rhs)
     }
 }
 
 impl SubAssign<&Self> for ArrayStore {
     fn sub_assign(&mut self, rhs: &Self) {
-        sub_assign_array_array_cur(self, rhs)
+        sub_assign_simd(self, rhs)
     }
 }
 
@@ -498,6 +498,17 @@ pub fn sub_assign_array_array_cur(lhs: &mut ArrayStore, rhs: &ArrayStore) {
         i += rhs.iter().skip(i).position(|y| y >= x).unwrap_or(rhs.vec.len());
         rhs.vec.get(i).map_or(true, |y| x != y)
     });
+}
+
+pub fn sub_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
+    let mut x = lhs.clone();
+    sub_assign_simd(&mut x, rhs);
+    x
+}
+
+pub fn sub_assign_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
+    let mut vec = super::array::simd::sub(lhs.as_slice(), rhs.as_slice());
+    std::mem::swap(&mut lhs.vec, &mut vec);
 }
 
 pub fn sub_x86_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
