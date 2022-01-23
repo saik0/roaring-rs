@@ -1,19 +1,17 @@
 use crate::bitmap::store::array::simd::lut::SHUFFLE_MASK;
 use crate::simd::compat::{swizzle_u16x8, to_bitmask};
 use crate::simd::util::{matrix_cmp, store};
+use std::cmp::Ordering::{Greater, Less};
 use std::mem;
 use std::simd::{u16x8, u8x16, Simd};
 
-/// Caller must ensure does not alias A or B
 pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     const VECTOR_LENGTH: usize = mem::size_of::<u16x8>() / mem::size_of::<u16>();
 
     // we handle the degenerate case
     if lhs.is_empty() {
         return rhs.to_vec();
-    }
-
-    if rhs.is_empty() {
+    } else if rhs.is_empty() {
         return lhs.to_vec();
     }
 
@@ -43,15 +41,15 @@ pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
                 // because there is no need to read more from B, they will
                 // all be large values.
                 let bitmask_belongs_to_difference = runningmask_a_found_in_b ^ 0xFF;
-                /*** next few lines are probably expensive *****/
+                // next few lines are probably expensive
                 // TODO aligned read?
-                let sm16: u8x16 =
+                let key: u8x16 =
                     Simd::from_slice(&SHUFFLE_MASK[bitmask_belongs_to_difference * 16..]);
                 // Safety: This is safe as the types are the same size
                 // TODO make this a cast when it's supported
-                let sm16: u16x8 = unsafe { mem::transmute(sm16) };
-                let p: u16x8 = swizzle_u16x8(v_a, sm16);
-                store(p, &mut out[k..]); // can overflow
+                let key: u16x8 = unsafe { mem::transmute(key) };
+                let difference: u16x8 = swizzle_u16x8(v_a, key);
+                store(difference, &mut out[k..]);
                 k += bitmask_belongs_to_difference.count_ones() as usize;
                 i += VECTOR_LENGTH;
                 if i == st_a {
@@ -70,51 +68,52 @@ pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
             }
         }
         // End of main vectorized loop
-        // at this point, either we have i_a == st_a, which is the end of the
-        // vectorized processing,
-        // or we have i_b == st_b,  and we are not done processing the vector...
+        // At this point either i_a == st_a, which is the end of the vectorized processing,
+        // or i_b == st_b and we are not done processing the vector...
         // so we need to finish it off.
         if i < st_a {
-            // we have unfinished business...
             v_b = Simd::from_slice(&rhs[j..]);
             let a_found_in_b: usize = to_bitmask(matrix_cmp(v_a, v_b));
             runningmask_a_found_in_b |= a_found_in_b;
             let bitmask_belongs_to_difference: usize = runningmask_a_found_in_b ^ 0xFF;
-            let sm16: u8x16 = Simd::from_slice(&SHUFFLE_MASK[bitmask_belongs_to_difference * 16..]);
+            let key: u8x16 = Simd::from_slice(&SHUFFLE_MASK[bitmask_belongs_to_difference * 16..]);
             // Safety: This is safe as the types are the same size
             // TODO make this a cast when it's supported
-            let sm16: u16x8 = unsafe { mem::transmute(sm16) };
-            let p: u16x8 = swizzle_u16x8(v_a, sm16);
-            store(p, &mut out[k..]);
+            let key: u16x8 = unsafe { mem::transmute(key) };
+            let difference: u16x8 = swizzle_u16x8(v_a, key);
+            store(difference, &mut out[k..]);
             k += bitmask_belongs_to_difference.count_ones() as usize;
             i += VECTOR_LENGTH;
         }
-        // at this point we should have i_a == st_a and i_b == st_b
+        debug_assert_eq!(i, st_a);
+        debug_assert_eq!(j, st_b);
     }
+
     // do the tail using scalar code
-    // match arms can be reordered, the ordering here is perf sensitive
-    #[allow(clippy::comparison_chain)]
+    // TODO can this call out to some array util instead?
     while i < lhs.len() && j < rhs.len() {
         let a = lhs[i];
         let b = rhs[j];
-        if a > b {
+        let cmp = a.cmp(&b);
+        // match arms can be reordered, the ordering here is perf sensitive
+        if cmp == Greater {
             j += 1;
-        } else if a < b {
+        } else if cmp == Less {
             out[k] = a;
             k += 1;
             i += 1;
         } else {
+            // cmp == Equal
             i += 1;
             j += 1;
         }
     }
-
-    // Why cant i_b be < rhs.len()?
     if i < lhs.len() {
         let n = lhs.len() - i;
         out[k..k + n].copy_from_slice(&lhs[i..i + n]);
         k += n;
     }
+
     out.truncate(k);
     out
 }
