@@ -72,7 +72,9 @@ pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
         // or i_b == st_b and we are not done processing the vector...
         // so we need to finish it off.
         if i < st_a {
-            v_b = Simd::from_slice(&rhs[j..]);
+            let mut buffer: [u16; 8] = [0; 8]; // buffer to do a masked load
+            buffer[..rhs.len() - j].copy_from_slice(&rhs[j..]);
+            v_b = Simd::from_array(buffer);
             let a_found_in_b: usize = to_bitmask(matrix_cmp(v_a, v_b));
             runningmask_a_found_in_b |= a_found_in_b;
             let bitmask_belongs_to_difference: usize = runningmask_a_found_in_b ^ 0xFF;
