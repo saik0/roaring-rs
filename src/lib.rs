@@ -11,6 +11,7 @@
 
 #![warn(missing_docs)]
 #![warn(variant_size_differences)]
+#![warn(unsafe_op_in_unsafe_fn)]
 #![allow(unknown_lints)] // For clippy
 
 extern crate byteorder;

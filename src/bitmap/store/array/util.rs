@@ -1,3 +1,5 @@
+#![allow(dead_code)] // TODO only keep the impls that win the benchmarks
+
 use std::cmp::Ordering;
 use std::cmp::Ordering::{Equal, Greater, Less};
 
@@ -193,7 +195,8 @@ pub fn and_assign_run_unchecked(lhs: &mut Vec<u16>, rhs: &[u16]) {
  * It has logarithmic complexity.
  */
 //#[inline(never)]
-// #[inline]
+#[inline]
+#[allow(clippy::too_many_arguments)] // TODO ... valid
 fn binary_search_4(
     array: &[u16],
     target1: u16,
@@ -341,12 +344,9 @@ pub fn intersect_skewed_small(small: &mut Vec<u16>, large: &[u16]) {
     }
     if (idx_s < size_s) && (idx_l < size_l) {
         let val_s = small[idx_s];
-        match large[idx_l..].binary_search(&val_s) {
-            Ok(_) => {
-                small[pos] = val_s;
-                pos += 1;
-            }
-            _ => (),
+        if large[idx_l..].binary_search(&val_s).is_ok() {
+            small[pos] = val_s;
+            pos += 1;
         }
     }
     small.truncate(pos)
@@ -425,12 +425,9 @@ pub fn intersect_skewed_small_unchecked(small: &mut Vec<u16>, large: &[u16]) {
         }
         if (idx_s < size_s) && (idx_l < size_l) {
             let val_s = small.get_unchecked(idx_s);
-            match large[idx_l..].binary_search(val_s) {
-                Ok(_) => {
-                    *small.get_unchecked_mut(pos) = *val_s;
-                    pos += 1;
-                }
-                _ => (),
+            if large[idx_l..].binary_search(val_s).is_ok() {
+                *small.get_unchecked_mut(pos) = *val_s;
+                pos += 1;
             }
         }
     }
@@ -509,12 +506,9 @@ pub fn intersect_skewed_large(small: &[u16], large: &mut Vec<u16>) {
     }
     if (idx_s < size_s) && (idx_l < size_l) {
         let val_s = small[idx_s];
-        match large[idx_l..].binary_search(&val_s) {
-            Ok(_) => {
-                large[pos] = val_s;
-                pos += 1;
-            }
-            _ => (),
+        if large[idx_l..].binary_search(&val_s).is_ok() {
+            large[pos] = val_s;
+            pos += 1;
         }
     }
     large.truncate(pos)
@@ -593,12 +587,9 @@ pub fn intersect_skewed_large_unchecked(small: &[u16], large: &mut Vec<u16>) {
         }
         if (idx_s < size_s) && (idx_l < size_l) {
             let val_s = small.get_unchecked(idx_s);
-            match large[idx_l..].binary_search(val_s) {
-                Ok(_) => {
-                    *large.get_unchecked_mut(pos) = *val_s;
-                    pos += 1;
-                }
-                _ => (),
+            if large[idx_l..].binary_search(val_s).is_ok() {
+                *large.get_unchecked_mut(pos) = *val_s;
+                pos += 1;
             }
         }
     }

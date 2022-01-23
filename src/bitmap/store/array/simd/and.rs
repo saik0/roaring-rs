@@ -101,12 +101,16 @@ pub fn and(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     // TODO finish up by calling normal scalar walk/run fn instead this inlined walk?
     // Safety:
     //  * Unchecked indexing safe given the condition of the loop
+
     while i < lhs.len() && j < rhs.len() {
         let a: u16 = unsafe { *lhs.get_unchecked(i) };
         let b: u16 = unsafe { *rhs.get_unchecked(j) };
+
+        // Match arms can be reordered and this is a performance sensitive loop
+        #[allow(clippy::comparison_chain)]
         if a < b {
             i += 1;
-        } else if b < a {
+        } else if a > b {
             j += 1;
         } else {
             *unsafe { out.get_unchecked_mut(k) } = a; //==b;

@@ -81,8 +81,8 @@ pub fn to_bitmask(mask: mask16x8) -> usize {
     // fallback to scalar bitmask
     let arr = mask.to_array();
     let mut m: usize = 0;
-    for i in 0..8 {
-        m |= (arr[i] as usize) << i;
+    for (i, &v) in arr.iter().enumerate() {
+        m |= (v as usize) << i;
     }
     m
 }

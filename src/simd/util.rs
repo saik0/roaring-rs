@@ -1,3 +1,5 @@
+#![allow(dead_code)] // TODO address this
+
 //! ## SIMD utilities
 //!
 //! functions that are generally useful, but not part of std

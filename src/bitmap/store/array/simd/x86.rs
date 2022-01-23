@@ -1,8 +1,13 @@
-#![allow(missing_docs)]
+// Prefer to let the translated C to look close to the original for easy of comparison
 #![allow(non_snake_case)]
 #![allow(non_upper_case_globals)]
 #![allow(clippy::comparison_chain)]
 #![allow(clippy::needless_range_loop)]
+// None of this is getting checked in upstream.
+#![allow(missing_docs)]
+#![allow(unsafe_op_in_unsafe_fn)]
+// Used depending on whether not some benchmarks are haphazardly commented out ¯\_(ツ)_/¯
+#![allow(dead_code)]
 
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██╗░░██╗░█████╗░░█████╗░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
