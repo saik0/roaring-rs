@@ -1,6 +1,7 @@
 use crate::bitmap::store::array::{
-    and_assign_run, and_assign_run_unchecked, and_assign_walk, intersect_skewed_large,
-    intersect_skewed_large_unchecked, intersect_skewed_small, intersect_skewed_small_unchecked,
+    and_assign_opt, and_assign_opt_unchecked, and_assign_run, and_assign_run_unchecked,
+    and_assign_walk, intersect_skewed_large, intersect_skewed_large_unchecked,
+    intersect_skewed_small, intersect_skewed_small_unchecked, sub_walk,
 };
 
 use std::cmp::Ordering::*;
@@ -250,22 +251,6 @@ impl BitOr<Self> for &ArrayStore {
     }
 }
 
-// #[inline]
-fn or_array_array(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
-    ArrayStore { vec: super::array::or_array_walk(lhs.as_slice(), rhs.as_slice()) }
-}
-
-pub fn or_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
-    let mut x = lhs.clone();
-    or_assign_std_simd(&mut x, rhs);
-    x
-}
-
-pub fn or_assign_std_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
-    let mut vec = super::array::simd::or(lhs.as_slice(), rhs.as_slice());
-    std::mem::swap(&mut lhs.vec, &mut vec);
-}
-
 impl BitAnd<Self> for &ArrayStore {
     type Output = ArrayStore;
 
@@ -286,6 +271,120 @@ impl BitAndAssign<&BitmapStore> for ArrayStore {
     fn bitand_assign(&mut self, rhs: &BitmapStore) {
         and_assign_array_bitmap(self, rhs);
     }
+}
+
+impl Sub<Self> for &ArrayStore {
+    type Output = ArrayStore;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        sub_x86_simd(self, rhs)
+    }
+}
+
+impl SubAssign<&Self> for ArrayStore {
+    fn sub_assign(&mut self, rhs: &Self) {
+        sub_assign_array_array_cur(self, rhs)
+    }
+}
+
+impl SubAssign<&BitmapStore> for ArrayStore {
+    fn sub_assign(&mut self, rhs: &BitmapStore) {
+        self.vec.retain(|x| !rhs.contains(*x));
+    }
+}
+
+impl BitXor<Self> for &ArrayStore {
+    type Output = ArrayStore;
+
+    fn bitxor(self, rhs: Self) -> Self::Output {
+        let mut vec = Vec::new();
+
+        // Traverse both arrays
+        let mut i = 0;
+        let mut j = 0;
+        while i < self.vec.len() && j < rhs.vec.len() {
+            let a = unsafe { self.vec.get_unchecked(i) };
+            let b = unsafe { rhs.vec.get_unchecked(j) };
+            match a.cmp(b) {
+                Less => {
+                    vec.push(*a);
+                    i += 1;
+                }
+                Greater => {
+                    vec.push(*b);
+                    j += 1;
+                }
+                Equal => {
+                    i += 1;
+                    j += 1;
+                }
+            }
+        }
+
+        // Store remaining elements of the arrays
+        vec.extend_from_slice(&self.vec[i..]);
+        vec.extend_from_slice(&rhs.vec[j..]);
+
+        ArrayStore { vec }
+    }
+}
+
+impl BitXorAssign<&Self> for ArrayStore {
+    fn bitxor_assign(&mut self, rhs: &Self) {
+        let mut i1 = 0usize;
+        let mut iter2 = rhs.vec.iter();
+        let mut current2 = iter2.next();
+        while i1 < self.vec.len() {
+            match current2.map(|c2| self.vec[i1].cmp(c2)) {
+                None => break,
+                Some(Less) => {
+                    i1 += 1;
+                }
+                Some(Greater) => {
+                    self.vec.insert(i1, *current2.unwrap());
+                    i1 += 1;
+                    current2 = iter2.next();
+                }
+                Some(Equal) => {
+                    self.vec.remove(i1);
+                    current2 = iter2.next();
+                }
+            }
+        }
+        if let Some(current) = current2 {
+            self.vec.push(*current);
+            self.vec.extend(iter2.cloned());
+        }
+    }
+}
+
+// Impls
+
+// #[inline]
+fn or_array_array(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
+    ArrayStore { vec: super::array::or_array_walk(lhs.as_slice(), rhs.as_slice()) }
+}
+
+pub fn or_x86_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
+    let mut x = lhs.clone();
+    or_assign_x86_simd(&mut x, rhs);
+    x
+}
+
+pub fn or_assign_x86_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
+    let mut vec = super::array::simd::x86::or_x86_simd(lhs.as_slice(), rhs.as_slice());
+    std::mem::swap(&mut lhs.vec, &mut vec);
+}
+
+pub fn or_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
+    let mut x = lhs.clone();
+    or_assign_simd(&mut x, rhs);
+    x
+}
+
+pub fn or_assign_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
+    let mut vec = super::array::simd::or(lhs.as_slice(), rhs.as_slice());
+    std::mem::swap(&mut lhs.vec, &mut vec);
 }
 
 //#[inline(never)]
@@ -388,143 +487,27 @@ fn and_assign_array_bitmap(lhs: &mut ArrayStore, rhs: &BitmapStore) {
     lhs.vec.retain(|x| rhs.contains(*x));
 }
 
-impl Sub<Self> for &ArrayStore {
-    type Output = ArrayStore;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        let mut vec = Vec::new();
-
-        // Traverse both arrays
-        let mut i = 0;
-        let mut j = 0;
-        while i < self.vec.len() && j < rhs.vec.len() {
-            let a = unsafe { self.vec.get_unchecked(i) };
-            let b = unsafe { rhs.vec.get_unchecked(j) };
-            match a.cmp(b) {
-                Less => {
-                    vec.push(*a);
-                    i += 1;
-                }
-                Greater => j += 1,
-                Equal => {
-                    i += 1;
-                    j += 1;
-                }
-            }
-        }
-
-        // Store remaining elements of the left array
-        vec.extend_from_slice(&self.vec[i..]);
-
-        ArrayStore { vec }
-    }
+fn sub_array_array_cur(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
+    ArrayStore::from_vec_unchecked(sub_walk(lhs.as_slice(), rhs.as_slice()))
 }
 
-impl SubAssign<&Self> for ArrayStore {
-    fn sub_assign(&mut self, rhs: &Self) {
-        let mut i = 0;
-        self.vec.retain(|x| {
-            i += rhs.iter().skip(i).position(|y| y >= x).unwrap_or(rhs.vec.len());
-            rhs.vec.get(i).map_or(true, |y| x != y)
-        });
-    }
+pub fn sub_assign_array_array_cur(lhs: &mut ArrayStore, rhs: &ArrayStore) {
+    let mut i = 0;
+    lhs.vec.retain(|x| {
+        i += rhs.iter().skip(i).position(|y| y >= x).unwrap_or(rhs.vec.len());
+        rhs.vec.get(i).map_or(true, |y| x != y)
+    });
 }
 
-impl SubAssign<&BitmapStore> for ArrayStore {
-    fn sub_assign(&mut self, rhs: &BitmapStore) {
-        self.vec.retain(|x| !rhs.contains(*x));
-    }
+pub fn sub_x86_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
+    let mut x = lhs.clone();
+    sub_assign_x86_simd(&mut x, rhs);
+    x
 }
 
-impl BitXor<Self> for &ArrayStore {
-    type Output = ArrayStore;
-
-    fn bitxor(self, rhs: Self) -> Self::Output {
-        let mut vec = Vec::new();
-
-        // Traverse both arrays
-        let mut i = 0;
-        let mut j = 0;
-        while i < self.vec.len() && j < rhs.vec.len() {
-            let a = unsafe { self.vec.get_unchecked(i) };
-            let b = unsafe { rhs.vec.get_unchecked(j) };
-            match a.cmp(b) {
-                Less => {
-                    vec.push(*a);
-                    i += 1;
-                }
-                Greater => {
-                    vec.push(*b);
-                    j += 1;
-                }
-                Equal => {
-                    i += 1;
-                    j += 1;
-                }
-            }
-        }
-
-        // Store remaining elements of the arrays
-        vec.extend_from_slice(&self.vec[i..]);
-        vec.extend_from_slice(&rhs.vec[j..]);
-
-        ArrayStore { vec }
-    }
-}
-
-impl BitXorAssign<&Self> for ArrayStore {
-    fn bitxor_assign(&mut self, rhs: &Self) {
-        let mut i1 = 0usize;
-        let mut iter2 = rhs.vec.iter();
-        let mut current2 = iter2.next();
-        while i1 < self.vec.len() {
-            match current2.map(|c2| self.vec[i1].cmp(c2)) {
-                None => break,
-                Some(Less) => {
-                    i1 += 1;
-                }
-                Some(Greater) => {
-                    self.vec.insert(i1, *current2.unwrap());
-                    i1 += 1;
-                    current2 = iter2.next();
-                }
-                Some(Equal) => {
-                    self.vec.remove(i1);
-                    current2 = iter2.next();
-                }
-            }
-        }
-        if let Some(current) = current2 {
-            self.vec.push(*current);
-            self.vec.extend(iter2.cloned());
-        }
-    }
-}
-
-//#[inline(never)]
-// #[inline]
-fn and_assign_opt(lhs: &mut Vec<u16>, rhs: &[u16]) {
-    const THRESHOLD: usize = 64;
-    if lhs.len() * THRESHOLD < rhs.len() {
-        intersect_skewed_small(lhs, rhs);
-    } else if rhs.len() * THRESHOLD < lhs.len() {
-        intersect_skewed_large(rhs, lhs);
-    } else {
-        and_assign_run(lhs, rhs);
-    }
-}
-
-//#[inline(never)]
-#[inline]
-fn and_assign_opt_unchecked(lhs: &mut Vec<u16>, rhs: &[u16]) {
-    const THRESHOLD: usize = 64;
-    if lhs.len() * THRESHOLD < rhs.len() {
-        intersect_skewed_small_unchecked(lhs, rhs);
-    } else if rhs.len() * THRESHOLD < lhs.len() {
-        intersect_skewed_large_unchecked(rhs, lhs);
-    } else {
-        and_assign_run_unchecked(lhs, rhs);
-    }
+pub fn sub_assign_x86_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
+    let mut vec = super::array::simd::x86::sub_x86_simd(lhs.as_slice(), rhs.as_slice());
+    std::mem::swap(&mut lhs.vec, &mut vec);
 }
 
 #[cfg(test)]

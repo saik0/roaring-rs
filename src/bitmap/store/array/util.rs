@@ -608,6 +608,60 @@ pub fn intersect_skewed_large_unchecked(small: &[u16], large: &mut Vec<u16>) {
     large.truncate(pos)
 }
 
+//#[inline(never)]
+// #[inline]
+pub fn and_assign_opt(lhs: &mut Vec<u16>, rhs: &[u16]) {
+    const THRESHOLD: usize = 64;
+    if lhs.len() * THRESHOLD < rhs.len() {
+        intersect_skewed_small(lhs, rhs);
+    } else if rhs.len() * THRESHOLD < lhs.len() {
+        intersect_skewed_large(rhs, lhs);
+    } else {
+        and_assign_run(lhs, rhs);
+    }
+}
+
+//#[inline(never)]
+#[inline]
+pub fn and_assign_opt_unchecked(lhs: &mut Vec<u16>, rhs: &[u16]) {
+    const THRESHOLD: usize = 64;
+    if lhs.len() * THRESHOLD < rhs.len() {
+        intersect_skewed_small_unchecked(lhs, rhs);
+    } else if rhs.len() * THRESHOLD < lhs.len() {
+        intersect_skewed_large_unchecked(rhs, lhs);
+    } else {
+        and_assign_run_unchecked(lhs, rhs);
+    }
+}
+
+pub fn sub_walk(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
+    let mut vec = Vec::new();
+
+    // Traverse both arrays
+    let mut i = 0;
+    let mut j = 0;
+    while i < lhs.len() && j < rhs.len() {
+        let a = unsafe { lhs.get_unchecked(i) };
+        let b = unsafe { rhs.get_unchecked(j) };
+        match a.cmp(b) {
+            Less => {
+                vec.push(*a);
+                i += 1;
+            }
+            Greater => j += 1,
+            Equal => {
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+
+    // Store remaining elements of the left array
+    vec.extend_from_slice(&lhs[i..]);
+
+    vec
+}
+
 #[inline]
 pub fn exponential_search<T>(slice: &[T], elem: &T) -> Result<usize, usize>
 where

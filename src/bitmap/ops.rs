@@ -157,12 +157,27 @@ impl RoaringBitmap {
         BitXorAssign::bitxor_assign(self, other)
     }
 
-    pub fn union_with_vector(&mut self, rhs: &RoaringBitmap) {
+    pub fn or_x86_simd(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
+        let mut containers = Vec::new();
+
+        for pair in Pairs::new(&self.containers, &rhs.containers) {
+            if let (Some(lhs), Some(rhs)) = pair {
+                let container = lhs.or_x86_simd(rhs);
+                if container.len() != 0 {
+                    containers.push(container);
+                }
+            }
+        }
+
+        RoaringBitmap { containers }
+    }
+
+    pub fn or_assign_x86_simd(&mut self, rhs: &RoaringBitmap) {
         for container in &rhs.containers {
             let key = container.key;
             match self.containers.binary_search_by_key(&key, |c| c.key) {
                 Err(loc) => self.containers.insert(loc, container.clone()),
-                Ok(loc) => self.containers[loc].or_assign_vector(container),
+                Ok(loc) => self.containers[loc].or_assign_x86_simd(container),
             }
         }
     }

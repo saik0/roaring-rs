@@ -119,8 +119,15 @@ impl Container {
         };
     }
 
-    pub fn or_assign_vector(&mut self, rhs: &Container) {
-        self.store.or_simd(&rhs.store);
+    pub fn or_x86_simd(&self, rhs: &Container) -> Container {
+        let store = self.store.or_x86_simd(&rhs.store);
+        let mut container = Container { key: self.key, store };
+        container.ensure_correct_store();
+        container
+    }
+
+    pub fn or_assign_x86_simd(&mut self, rhs: &Container) {
+        self.store.or_x86_simd(&rhs.store);
         self.ensure_correct_store();
     }
 
@@ -132,7 +139,7 @@ impl Container {
     }
 
     pub fn and_std_simd(&self, rhs: &Container) -> Container {
-        let store = self.store.and_std_simd(&rhs.store);
+        let store = self.store.and_simd(&rhs.store);
         let mut container = Container { key: self.key, store };
         container.ensure_correct_store();
         container

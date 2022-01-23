@@ -152,6 +152,22 @@ impl Store {
         }
     }
 
+    pub fn or_x86_simd(&self, rhs: &Store) -> Store {
+        match (self, rhs) {
+            (&Array(ref vec1), &Array(ref vec2)) => Array(array_store::or_x86_simd(vec1, vec2)),
+            (&Bitmap(..), &Array(..)) => {
+                let mut rhs = rhs.clone();
+                BitAndAssign::bitand_assign(&mut rhs, self);
+                rhs
+            }
+            _ => {
+                let mut lhs = self.clone();
+                BitAndAssign::bitand_assign(&mut lhs, rhs);
+                lhs
+            }
+        }
+    }
+
     pub fn or_simd(&mut self, rhs: &Store) {
         match (self, &rhs) {
             (&mut Array(ref mut vec1), &Array(ref vec2)) => {
@@ -187,7 +203,7 @@ impl Store {
         }
     }
 
-    pub fn and_std_simd(&self, rhs: &Store) -> Store {
+    pub fn and_simd(&self, rhs: &Store) -> Store {
         match (self, rhs) {
             (&Array(ref vec1), &Array(ref vec2)) => Array(array_store::and_std_simd(vec1, vec2)),
             (&Bitmap(..), &Array(..)) => {
