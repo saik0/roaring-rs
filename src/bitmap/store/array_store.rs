@@ -1,7 +1,6 @@
 use crate::bitmap::store::array::{
-    and_assign_opt, and_assign_opt_unchecked, and_assign_run, and_assign_run_unchecked,
-    and_assign_walk, intersect_skewed_large, intersect_skewed_large_unchecked,
-    intersect_skewed_small, intersect_skewed_small_unchecked, sub_walk,
+    and_assign_opt, and_assign_opt_unchecked, and_assign_run,
+    and_assign_walk, intersect_skewed_large_unchecked, intersect_skewed_small_unchecked, sub_walk,
 };
 
 use std::cmp::Ordering::*;

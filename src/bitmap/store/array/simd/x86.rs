@@ -481,13 +481,13 @@ unsafe fn _difference_vector_x86(
 
     if (i_a < st_a) && (i_b < st_b) {
         // this is the vectorized code path
-        let mut v_a: __m128i;
-        let mut v_b: __m128i; //, v_bmax;
+        
+         //, v_bmax;
                               // we load a vector from A and a vector from B
                               // v_a = _mm_lddqu_si128((__m128i *)&A[i_a]);
                               // v_b = _mm_lddqu_si128((__m128i *)&B[i_b]);
-        v_a = _mm_lddqu_si128(A.add(i_a).cast::<__m128i>());
-        v_b = _mm_lddqu_si128(B.add(i_b).cast::<__m128i>());
+        let mut v_a: __m128i = _mm_lddqu_si128(A.add(i_a).cast::<__m128i>());
+        let mut v_b: __m128i = _mm_lddqu_si128(B.add(i_b).cast::<__m128i>());
         // we have a runningmask which indicates which values from A have been
         // spotted in B, these don't get written out.
         let mut runningmask_a_found_in_b: __m128i = _mm_setzero_si128();
@@ -498,7 +498,7 @@ unsafe fn _difference_vector_x86(
             // afoundinb will contain a mask indicate for each entry in A
             // whether it is seen
             // in B
-            let mut a_found_in_b: __m128i = _mm_cmpistrm::<CMPESTRM_CTRL>(v_b, v_a);
+            let a_found_in_b: __m128i = _mm_cmpistrm::<CMPESTRM_CTRL>(v_b, v_a);
             let mut runningmask_a_found_in_b: __m128i =
                 _mm_or_si128(runningmask_a_found_in_b, a_found_in_b);
             // we always compare the last values of A and B
@@ -599,5 +599,5 @@ unsafe fn _difference_vector_x86(
         }
         count += s_a - i_a;
     }
-    return count;
+    count
 }
