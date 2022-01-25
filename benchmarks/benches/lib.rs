@@ -35,14 +35,14 @@ type DirectoryName = &'static str;
 // ];
 
 const DATASETS: &[&str] = &[
-    CENSUS1881,
-    CENSUS1881_SRT,
-    CENSUS_INCOME,
-    CENSUS_INCOME_SRT,
+    // CENSUS1881,
+    // CENSUS1881_SRT,
+    // CENSUS_INCOME,
+    // CENSUS_INCOME_SRT,
     WEATHER_SEPT_85,
-    WEATHER_SEPT_85_SRT,
-    WIKILEAKS_NOQUOTES,
-    WIKILEAKS_NOQUOTES_SRT,
+    // WEATHER_SEPT_85_SRT,
+    // WIKILEAKS_NOQUOTES,
+    // WIKILEAKS_NOQUOTES_SRT,
 ];
 
 lazy_static! {
@@ -1021,8 +1021,9 @@ criterion_group!(
     // successive_or,
 );
 
-criterion_group!(ops, and, or, xor, sub);
-// criterion_group!(ops, or2);
+// criterion_group!(ops, and, or, xor, sub);
+// criterion_group!(ops, and2, or2);
+criterion_group!(ops, and2);
 
 criterion_group!(create, creation);
 

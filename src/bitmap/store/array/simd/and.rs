@@ -1,5 +1,5 @@
-use crate::bitmap::store::array::simd::lut::SHUFFLE_MASK;
-use crate::simd::compat::{swizzle_u16x8, to_bitmask};
+use crate::bitmap::store::array::simd::lut::{unique_swizzle, SHUFFLE_MASK};
+use crate::simd::compat::to_bitmask;
 use crate::simd::util::{matrix_cmp, store};
 use core_simd::{u16x8, u8x16, Simd};
 use mem::transmute;
@@ -28,18 +28,8 @@ pub fn and(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
         let mut v_a: u16x8 = Simd::from_slice(&lhs[i..]);
         let mut v_b: u16x8 = Simd::from_slice(&rhs[j..]);
         loop {
-            let r = to_bitmask(matrix_cmp(v_a, v_b));
-
-            // Safety:
-            //  * r is guaranteed to be 1 byte at most.
-            //    256 * 16 == 4096, which is the len of SHUFFLE_MASK
-            let key: u8x16 = Simd::from_slice(&SHUFFLE_MASK[r * 16..]);
-
-            // Safety:
-            //  * These types are the same size.
-            //  * TODO replace with cast once it's in nightly
-            let key: u16x8 = unsafe { transmute(key) };
-            let intersection: u16x8 = swizzle_u16x8(v_a, key);
+            let r = matrix_cmp(v_a, v_b).to_bitmask()[0];
+            let intersection = unique_swizzle(v_a, r);
 
             // Safety:
             //  * Unchecked store to out[k..] k is always <= i or j

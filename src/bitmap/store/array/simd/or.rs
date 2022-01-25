@@ -1,4 +1,4 @@
-use crate::bitmap::store::array::simd::lut::UNIQUE_SHUF;
+use crate::bitmap::store::array::simd::lut::{unique_swizzle, UNIQUE_SHUF};
 use crate::bitmap::store::array::util::or_array_walk_mut;
 use crate::simd::compat::{swizzle_u16x8, to_bitmask};
 use crate::simd::util::{simd_merge, store, Shr1};
@@ -8,11 +8,9 @@ use std::mem;
 #[inline]
 fn store_unique(old: u16x8, newval: u16x8, output: &mut [u16]) -> usize {
     let tmp: u16x8 = Shr1::swizzle2(newval, old);
-    let mask: usize = to_bitmask(tmp.lanes_eq(newval));
+    let mask = tmp.lanes_eq(newval).to_bitmask()[0];
     let count: usize = 8 - mask.count_ones() as usize;
-    let key: u8x16 = Simd::from_slice(&UNIQUE_SHUF[mask * 16..]);
-    let key: u16x8 = unsafe { mem::transmute(key) };
-    let val: u16x8 = swizzle_u16x8(newval, key);
+    let val = unique_swizzle(newval, 255 - mask);
     store(val, output);
     count
 }

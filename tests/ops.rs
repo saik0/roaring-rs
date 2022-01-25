@@ -1,5 +1,8 @@
 extern crate roaring;
 
+use proptest::arbitrary::any;
+use proptest::collection::btree_set;
+use proptest::proptest;
 use roaring::RoaringBitmap;
 
 #[test]
@@ -115,3 +118,49 @@ fn or_self_len_8() {
 //
 //     assert_eq!((0..8192).collect::<RoaringBitmap>(), rb3);
 // }
+
+proptest! {
+    #[test]
+    fn proptest_and(a in btree_set(0u32..4096, ..=4096), b in btree_set(0u32..4096, ..=4096)) {
+        let x = RoaringBitmap::from_sorted_iter(a.iter().cloned()).unwrap();
+        let y = RoaringBitmap::from_sorted_iter(b.iter().cloned()).unwrap();
+
+        let intersection_btree: Vec<u32> = a.intersection(&b).cloned().collect();
+        let intersection_roaring: Vec<u32> = (x & y).into_iter().collect();
+
+        assert_eq!(intersection_btree, intersection_roaring);
+    }
+
+    #[test]
+    fn proptest_or(a in btree_set(0u32..4096, ..=4096), b in btree_set(0u32..4096, ..=4096)) {
+        let x = RoaringBitmap::from_sorted_iter(a.iter().cloned()).unwrap();
+        let y = RoaringBitmap::from_sorted_iter(b.iter().cloned()).unwrap();
+
+        let intersection_btree: Vec<u32> = a.union(&b).cloned().collect();
+        let intersection_roaring: Vec<u32> = (x | y).into_iter().collect();
+
+        assert_eq!(intersection_btree, intersection_roaring);
+    }
+
+    #[test]
+    fn proptest_sub(a in btree_set(0u32..4096, ..=4096), b in btree_set(0u32..4096, ..=4096)) {
+        let x = RoaringBitmap::from_sorted_iter(a.iter().cloned()).unwrap();
+        let y = RoaringBitmap::from_sorted_iter(b.iter().cloned()).unwrap();
+
+        let intersection_btree: Vec<u32> = a.difference(&b).cloned().collect();
+        let intersection_roaring: Vec<u32> = (x - y).into_iter().collect();
+
+        assert_eq!(intersection_btree, intersection_roaring);
+    }
+
+    #[test]
+    fn proptest_xor(a in btree_set(0u32..4096, ..=4096), b in btree_set(0u32..4096, ..=4096)) {
+        let x = RoaringBitmap::from_sorted_iter(a.iter().cloned()).unwrap();
+        let y = RoaringBitmap::from_sorted_iter(b.iter().cloned()).unwrap();
+
+        let intersection_btree: Vec<u32> = a.symmetric_difference(&b).cloned().collect();
+        let intersection_roaring: Vec<u32> = (x ^ y).into_iter().collect();
+
+        assert_eq!(intersection_btree, intersection_roaring);
+    }
+}

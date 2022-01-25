@@ -298,13 +298,13 @@ impl BitXor<Self> for &ArrayStore {
     type Output = ArrayStore;
 
     fn bitxor(self, rhs: Self) -> Self::Output {
-        xor_simd(self, rhs)
+        xor_array_array_cur(self, rhs)
     }
 }
 
 impl BitXorAssign<&Self> for ArrayStore {
     fn bitxor_assign(&mut self, rhs: &Self) {
-        xor_assign_simd(self, rhs)
+        xor_assign_array_array_cur(self, rhs)
     }
 }
 

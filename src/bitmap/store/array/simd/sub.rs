@@ -1,4 +1,4 @@
-use crate::bitmap::store::array::simd::lut::SHUFFLE_MASK;
+use crate::bitmap::store::array::simd::lut::{unique_swizzle, SHUFFLE_MASK};
 use crate::simd::compat::{swizzle_u16x8, to_bitmask};
 use crate::simd::util::{matrix_cmp, store};
 use core_simd::{u16x8, u8x16, Simd};
@@ -27,11 +27,11 @@ pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
         let mut v_b: u16x8 = Simd::from_slice(&rhs[j..]);
         // we have a runningmask which indicates which values from A have been
         // spotted in B, these don't get written out.
-        let mut runningmask_a_found_in_b: usize = 0;
+        let mut runningmask_a_found_in_b: u8 = 0;
         loop {
             // a_found_in_b will contain a mask indicate for each entry in A
             // whether it is seen in B
-            let a_found_in_b: usize = to_bitmask(matrix_cmp(v_a, v_b));
+            let a_found_in_b: u8 = matrix_cmp(v_a, v_b).to_bitmask()[0];
             runningmask_a_found_in_b |= a_found_in_b;
             // we always compare the last values of A and B
             let a_max: u16 = lhs[i + VECTOR_LENGTH - 1];
@@ -41,14 +41,7 @@ pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
                 // because there is no need to read more from B, they will
                 // all be large values.
                 let bitmask_belongs_to_difference = runningmask_a_found_in_b ^ 0xFF;
-                // next few lines are probably expensive
-                // TODO aligned read?
-                let key: u8x16 =
-                    Simd::from_slice(&SHUFFLE_MASK[bitmask_belongs_to_difference * 16..]);
-                // Safety: This is safe as the types are the same size
-                // TODO make this a cast when it's supported
-                let key: u16x8 = unsafe { mem::transmute(key) };
-                let difference: u16x8 = swizzle_u16x8(v_a, key);
+                let difference: u16x8 = unique_swizzle(v_a, bitmask_belongs_to_difference);
                 store(difference, &mut out[k..]);
                 k += bitmask_belongs_to_difference.count_ones() as usize;
                 i += VECTOR_LENGTH;
@@ -75,14 +68,10 @@ pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
             let mut buffer: [u16; 8] = [0; 8]; // buffer to do a masked load
             buffer[..rhs.len() - j].copy_from_slice(&rhs[j..]);
             v_b = Simd::from_array(buffer);
-            let a_found_in_b: usize = to_bitmask(matrix_cmp(v_a, v_b));
+            let a_found_in_b: u8 = matrix_cmp(v_a, v_b).to_bitmask()[0];
             runningmask_a_found_in_b |= a_found_in_b;
-            let bitmask_belongs_to_difference: usize = runningmask_a_found_in_b ^ 0xFF;
-            let key: u8x16 = Simd::from_slice(&SHUFFLE_MASK[bitmask_belongs_to_difference * 16..]);
-            // Safety: This is safe as the types are the same size
-            // TODO make this a cast when it's supported
-            let key: u16x8 = unsafe { mem::transmute(key) };
-            let difference: u16x8 = swizzle_u16x8(v_a, key);
+            let bitmask_belongs_to_difference: u8 = runningmask_a_found_in_b ^ 0xFF;
+            let difference: u16x8 = unique_swizzle(v_a, bitmask_belongs_to_difference);
             store(difference, &mut out[k..]);
             k += bitmask_belongs_to_difference.count_ones() as usize;
             i += VECTOR_LENGTH;

@@ -50,39 +50,7 @@ pub fn swizzle_u16x8(a: u16x8, b: u16x8) -> u16x8 {
     unsafe { mem::transmute(swizzle_bytes(mem::transmute(a), mem::transmute(b))) }
 }
 
-#[allow(unreachable_code)]
 #[inline]
 pub fn to_bitmask(mask: mask16x8) -> usize {
-    #[cfg(target_feature = "sse2")]
-    unsafe {
-        #[cfg(target_arch = "x86")]
-        use std::arch::x86::{_mm_movemask_epi8, _mm_packs_epi16, _mm_setzero_si128};
-        #[cfg(target_arch = "x86_64")]
-        use std::arch::x86_64::{_mm_movemask_epi8, _mm_packs_epi16, _mm_setzero_si128};
-        return _mm_movemask_epi8(_mm_packs_epi16(mem::transmute(mask), _mm_setzero_si128()))
-            as usize;
-    }
-
-    // TODO add neon
-    // could be impl with a few neon instr
-    // https://github.com/lemire/Code-used-on-Daniel-Lemire-s-blog/blob/b8257/extra/neon/movemask/code.h#L24
-    // https://stackoverflow.com/questions/11870910/sse-mm-movemask-epi8-equivalent-method-for-arm-neon
-
-    // TODO test
-    #[cfg(target_feature = "simd128")]
-    unsafe {
-        #[cfg(target_arch = "wasm32")]
-        use std::arch::wasm32::i16x8_bitmask;
-        #[cfg(target_arch = "wasm64")]
-        use std::arch::wasm64::i16x8_bitmask;
-        return i16x8_bitmask(mem::transmute(mask)) as usize;
-    }
-
-    // fallback to scalar bitmask
-    let arr = mask.to_array();
-    let mut m: usize = 0;
-    for (i, &v) in arr.iter().enumerate() {
-        m |= (v as usize) << i;
-    }
-    m
+    mask.to_bitmask()[0] as usize
 }

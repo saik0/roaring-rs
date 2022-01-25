@@ -1,7 +1,4 @@
 #![feature(portable_simd)]
-#![allow(incomplete_features)]
-#![feature(generic_const_exprs)]
-
 //! This is a [Rust][] port of the [Roaring bitmap][] data structure, initially
 //! defined as a [Java library][roaring-java] and described in [_Better bitmap
 //! performance with Roaring bitmaps_][roaring-paper].
