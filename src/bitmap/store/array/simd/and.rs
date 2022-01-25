@@ -83,7 +83,6 @@ pub fn and(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
             j += 1;
         }
     }
-
     out.truncate(k);
     out
 }

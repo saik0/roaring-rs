@@ -5,7 +5,7 @@ use itertools::Itertools;
 use std::fs::{DirEntry, File};
 use std::io::{BufReader, Read};
 use std::num::ParseIntError;
-use std::ops::BitOrAssign;
+
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
@@ -78,12 +78,13 @@ fn parse_dir_files2(files: &str) -> Vec<(DirEntry, Vec<u32>)> {
     let path_str = format!("datasets/numbers/{}", files);
     let path = Path::new(path_str.as_str());
     fs::read_dir(path)
-        .expect(&format!("failed to read dir: {:?}", files))
+        .unwrap_or_else(|_| panic!("failed to read dir: {:?}", files))
         .map(|r| {
             let file = r.expect("an error ocurred while reading files");
-            let str = fs::read_to_string(file.path()).expect(&format!("failed to read {:?}", file));
-            let parsed_numbers =
-                extract_integers(&str).expect(&format!("failed to parse int from {:?}", str));
+            let str = fs::read_to_string(file.path())
+                .unwrap_or_else(|_| panic!("failed to read {:?}", file));
+            let parsed_numbers = extract_integers(&str)
+                .unwrap_or_else(|_| panic!("failed to parse int from {:?}", str));
             (file, parsed_numbers)
         })
         .sorted_unstable_by_key(|(file, _)| file.file_name())
@@ -94,14 +95,14 @@ fn parse_dir_bin(files: &str, subdir: &str) -> Vec<RoaringBitmap> {
     let path_str = format!("datasets/{}/{}", subdir, files);
     let path = Path::new(path_str.as_str());
     fs::read_dir(path)
-        .expect(&format!("failed to read dir: {:?}", files))
+        .unwrap_or_else(|_| panic!("failed to read dir: {:?}", files))
         .map(|r| r.expect("an error ocurred while reading files"))
         .sorted_unstable_by_key(|file| file.file_name())
         .map(|file| {
             let f = File::open(file.path()).unwrap();
-            let mut buf = BufReader::new(f);
-            let bitmap = RoaringBitmap::deserialize_from(buf).unwrap();
-            bitmap
+            let buf = BufReader::new(f);
+
+            RoaringBitmap::deserialize_from(buf).unwrap()
         })
         .collect()
 }
@@ -110,7 +111,7 @@ fn parse_c_dir_bin(files: &str, subdir: &str) -> Vec<Bitmap> {
     let path_str = format!("datasets/{}/{}", subdir, files);
     let path = Path::new(path_str.as_str());
     fs::read_dir(path)
-        .expect(&format!("failed to read dir: {:?}", files))
+        .unwrap_or_else(|_| panic!("failed to read dir: {:?}", files))
         .map(|r| r.expect("an error ocurred while reading files"))
         .sorted_unstable_by_key(|file| file.file_name())
         .map(|file| {
@@ -118,8 +119,8 @@ fn parse_c_dir_bin(files: &str, subdir: &str) -> Vec<Bitmap> {
             let mut buf = BufReader::new(f);
             let mut bytes: Vec<u8> = Vec::new();
             buf.read_to_end(&mut bytes);
-            let bitmap = croaring::Bitmap::deserialize(&bytes);
-            bitmap
+
+            croaring::Bitmap::deserialize(&bytes)
         })
         .collect()
 }
@@ -196,14 +197,14 @@ fn parse_c_dir_bin(files: &str, subdir: &str) -> Vec<Bitmap> {
 fn binary_op(
     c: &mut Criterion,
     op_name: &str,
-    op_owned: impl Fn(RoaringBitmap, RoaringBitmap) -> RoaringBitmap,
+    _op_owned: impl Fn(RoaringBitmap, RoaringBitmap) -> RoaringBitmap,
     op_ref: impl Fn(RoaringBitmap, &RoaringBitmap) -> RoaringBitmap,
-    op_assign_owned: impl Fn(RoaringBitmap, RoaringBitmap),
-    op_assign_ref: impl Fn(RoaringBitmap, &RoaringBitmap),
+    _op_assign_owned: impl Fn(RoaringBitmap, RoaringBitmap),
+    _op_assign_ref: impl Fn(RoaringBitmap, &RoaringBitmap),
     op_x86_simd: impl Fn(RoaringBitmap, &RoaringBitmap) -> RoaringBitmap,
-    op_assign_x86_simd: impl Fn(RoaringBitmap, &RoaringBitmap),
+    _op_assign_x86_simd: impl Fn(RoaringBitmap, &RoaringBitmap),
     op_simd: impl Fn(RoaringBitmap, &RoaringBitmap) -> RoaringBitmap,
-    op_assign_simd: impl Fn(RoaringBitmap, &RoaringBitmap),
+    _op_assign_simd: impl Fn(RoaringBitmap, &RoaringBitmap),
     op_c: impl Fn(Bitmap, &Bitmap) -> Bitmap,
     op_c_assign: impl Fn(Bitmap, &Bitmap),
 ) {
@@ -322,7 +323,7 @@ fn and2(c: &mut Criterion) {
     let c_arrays: Vec<(DirectoryName, Vec<croaring::Bitmap>)> =
         DATASETS.iter().map(|&dir| (dir, parse_c_dir_bin(dir, "arrays"))).collect();
 
-    let mut group = c.benchmark_group(format!("pairwise_and"));
+    let mut group = c.benchmark_group("pairwise_and".to_string());
 
     for (filename, bitmaps) in PARSED_DATASET_ARRAYS.iter() {
         // Number of bits
@@ -394,7 +395,7 @@ fn and2(c: &mut Criterion) {
 
     group.finish();
 
-    let mut group = c.benchmark_group(format!("pairwise_and_assign"));
+    let mut group = c.benchmark_group("pairwise_and_assign".to_string());
 
     for (filename, bitmaps) in PARSED_DATASET_ARRAYS.iter() {
         // Number of bits
@@ -531,7 +532,7 @@ fn or2(c: &mut Criterion) {
     let c_arrays: Vec<(DirectoryName, Vec<croaring::Bitmap>)> =
         DATASETS.iter().map(|&dir| (dir, parse_c_dir_bin(dir, "arrays"))).collect();
 
-    let mut group = c.benchmark_group(format!("pairwise_or"));
+    let mut group = c.benchmark_group("pairwise_or".to_string());
 
     for (filename, bitmaps) in PARSED_DATASET_ARRAYS.iter() {
         // Number of bits
@@ -579,7 +580,7 @@ fn or2(c: &mut Criterion) {
 
     group.finish();
 
-    let mut group = c.benchmark_group(format!("pairwise_or_assign"));
+    let mut group = c.benchmark_group("pairwise_or_assign".to_string());
 
     for (filename, bitmaps) in PARSED_DATASET_ARRAYS.iter() {
         // Number of bits
@@ -689,9 +690,9 @@ fn and(c: &mut Criterion) {
         c,
         "and",
         |a, b| a.and_cur(&b),
-        |a, b| a.and_cur(&b),
+        |a, b| a.and_cur(b),
         |mut a, b| a.and_assign_cur(&b),
-        |mut a, b| a.and_assign_cur(&b),
+        |mut a, b| a.and_assign_cur(b),
         |a, b| a.and_x86_simd(b),
         |mut a, b| a.and_assign_x86_simd(b),
         |a, b| a.and_simd(b),
@@ -723,9 +724,9 @@ fn sub(c: &mut Criterion) {
         c,
         "sub",
         |a, b| a.sub_cur(&b),
-        |a, b| a.sub_cur(&b),
+        |a, b| a.sub_cur(b),
         |mut a, b| a.sub_assign_cur(&b),
-        |mut a, b| a.sub_assign_cur(&b),
+        |mut a, b| a.sub_assign_cur(b),
         |a, b| a.sub_x86_simd(b),
         |mut a, b| a.sub_assign_x86_simd(b),
         |a, b| a.sub_simd(b),
@@ -740,12 +741,12 @@ fn xor(c: &mut Criterion) {
         c,
         "xor",
         |a, b| a.xor_cur(&b),
-        |a, b| a.xor_cur(&b),
+        |a, b| a.xor_cur(b),
         |mut a, b| a.xor_assign_cur(&b),
-        |mut a, b| a.xor_assign_cur(&b),
+        |mut a, b| a.xor_assign_cur(b),
         // no x86 xor simd
-        |a, b| a,
-        |mut a, b| {},
+        |a, _b| a,
+        |_a, _b| {},
         |a, b| a.xor_simd(b),
         |mut a, b| a.xor_assign_simd(b),
         |a, b| a.xor(b),
@@ -955,7 +956,7 @@ fn successive_and(c: &mut Criterion) {
                 || bitmaps.clone(),
                 |bitmaps| {
                     let mut iter = bitmaps.into_iter();
-                    let mut first = iter.next().unwrap().clone();
+                    let mut first = iter.next().unwrap();
                     for bitmap in iter {
                         first &= bitmap;
                     }

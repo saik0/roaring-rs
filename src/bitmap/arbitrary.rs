@@ -172,7 +172,7 @@ mod test {
 
     prop_compose! {
         fn containers(n: usize)
-                     (keys in ArrayStore::sampled(n, 0..=0), stores in vec(Store::arbitrary(), n) ) -> RoaringBitmap {
+                     (keys in ArrayStore::sampled(n, 0..=10), stores in vec(Store::arbitrary(), n) ) -> RoaringBitmap {
             let containers = keys.into_iter().zip(stores.into_iter()).map(|(key, store)| {
                 let mut container = Container { key, store };
                 container.ensure_correct_store();
@@ -184,7 +184,7 @@ mod test {
 
     impl RoaringBitmap {
         prop_compose! {
-            pub fn arbitrary()(bitmap in (0usize..=1).prop_flat_map(containers)) -> RoaringBitmap {
+            pub fn arbitrary()(bitmap in (0usize..=10).prop_flat_map(containers)) -> RoaringBitmap {
                 bitmap
             }
         }
