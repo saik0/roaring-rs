@@ -35,14 +35,14 @@ type DirectoryName = &'static str;
 // ];
 
 const DATASETS: &[&str] = &[
-    // CENSUS1881,
-    // CENSUS1881_SRT,
-    // CENSUS_INCOME,
-    // CENSUS_INCOME_SRT,
+    CENSUS1881,
+    CENSUS1881_SRT,
+    CENSUS_INCOME,
+    CENSUS_INCOME_SRT,
     WEATHER_SEPT_85,
-    // WEATHER_SEPT_85_SRT,
-    // WIKILEAKS_NOQUOTES,
-    // WIKILEAKS_NOQUOTES_SRT,
+    WEATHER_SEPT_85_SRT,
+    WIKILEAKS_NOQUOTES,
+    WIKILEAKS_NOQUOTES_SRT,
 ];
 
 lazy_static! {
@@ -211,27 +211,29 @@ fn parse_c_dir_bin(files: &str, subdir: &str) -> Vec<Bitmap> {
 fn binary_op(
     c: &mut Criterion,
     op_name: &str,
-    op_owned: fn(RoaringBitmap, RoaringBitmap) -> RoaringBitmap,
-    op_ref: fn(RoaringBitmap, &RoaringBitmap) -> RoaringBitmap,
-    op_assign_owned: fn(RoaringBitmap, RoaringBitmap),
-    op_assign_ref: fn(RoaringBitmap, &RoaringBitmap),
+    op_owned: impl Fn(RoaringBitmap, RoaringBitmap) -> RoaringBitmap,
+    op_ref: impl Fn(RoaringBitmap, &RoaringBitmap) -> RoaringBitmap,
+    op_assign_owned: impl Fn(RoaringBitmap, RoaringBitmap),
+    op_assign_ref: impl Fn(RoaringBitmap, &RoaringBitmap),
+    op_c: impl Fn(Bitmap, &Bitmap) -> Bitmap,
+    op_c_assign: impl Fn(Bitmap, &Bitmap),
 ) {
     let mut group = c.benchmark_group(format!("pairwise_{}", op_name));
 
     for (filename, bitmaps) in PARSED_DATASET_BITMAPS.iter() {
         // Number of bits
 
-        group.bench_function(BenchmarkId::new("own", filename), |b| {
-            b.iter_batched(
-                || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
-                |bitmaps| {
-                    for (a, b) in bitmaps {
-                        black_box(op_owned(a, b));
-                    }
-                },
-                BatchSize::SmallInput,
-            );
-        });
+        // group.bench_function(BenchmarkId::new("own", filename), |b| {
+        //     b.iter_batched(
+        //         || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+        //         |bitmaps| {
+        //             for (a, b) in bitmaps {
+        //                 black_box(op_owned(a, b));
+        //             }
+        //         },
+        //         BatchSize::SmallInput,
+        //     );
+        // });
 
         group.bench_function(BenchmarkId::new("ref", filename), |b| {
             b.iter_batched(
@@ -245,17 +247,17 @@ fn binary_op(
             );
         });
 
-        group.bench_function(BenchmarkId::new("assign_own", filename), |b| {
-            b.iter_batched(
-                || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
-                |bitmaps| {
-                    for (a, b) in bitmaps {
-                        op_assign_owned(a, b)
-                    }
-                },
-                BatchSize::SmallInput,
-            );
-        });
+        // group.bench_function(BenchmarkId::new("assign_own", filename), |b| {
+        //     b.iter_batched(
+        //         || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+        //         |bitmaps| {
+        //             for (a, b) in bitmaps {
+        //                 op_assign_owned(a, b)
+        //             }
+        //         },
+        //         BatchSize::SmallInput,
+        //     );
+        // });
 
         group.bench_function(BenchmarkId::new("assign_ref", filename), |b| {
             b.iter_batched(
@@ -263,6 +265,36 @@ fn binary_op(
                 |bitmaps| {
                     for (a, b) in bitmaps {
                         op_assign_ref(a, &b)
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    let c_arrays: Vec<(DirectoryName, Vec<croaring::Bitmap>)> =
+        DATASETS.iter().map(|&dir| (dir, parse_c_dir_bin(dir, "bin"))).collect();
+
+    for (filename, bitmaps) in c_arrays.iter() {
+        // Number of bits
+
+        group.bench_function(BenchmarkId::new("c_ref", filename), |b| {
+            b.iter_batched(
+                || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+                |bitmaps| {
+                    for (a, ref b) in bitmaps {
+                        black_box(op_c(a, b));
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_function(BenchmarkId::new("c_assign_ref", filename), |b| {
+            b.iter_batched(
+                || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+                |bitmaps| {
+                    for (a, ref b) in bitmaps {
+                        op_c_assign(a, b);
                     }
                 },
                 BatchSize::SmallInput,
@@ -640,19 +672,55 @@ fn cardinality(c: &mut Criterion) {
 // Ops
 
 fn and(c: &mut Criterion) {
-    binary_op(c, "and", |a, b| a & b, |a, b| a & b, |mut a, b| a &= b, |mut a, b| a &= b)
+    binary_op(
+        c,
+        "and",
+        |a, b| a & b,
+        |a, b| a & b,
+        |mut a, b| a &= b,
+        |mut a, b| a &= b,
+        |a, b| a.and(b),
+        |mut a, b| a.and_inplace(b),
+    )
 }
 
 fn or(c: &mut Criterion) {
-    binary_op(c, "or", |a, b| a | b, |a, b| a | b, |mut a, b| a |= b, |mut a, b| a |= b)
+    binary_op(
+        c,
+        "or",
+        |a, b| a | b,
+        |a, b| a | b,
+        |mut a, b| a |= b,
+        |mut a, b| a |= b,
+        |a, b| a.or(b),
+        |mut a, b| a.or_inplace(b),
+    )
 }
 
 fn xor(c: &mut Criterion) {
-    binary_op(c, "xor", |a, b| a ^ b, |a, b| a ^ b, |mut a, b| a ^= b, |mut a, b| a ^= b)
+    binary_op(
+        c,
+        "xor",
+        |a, b| a ^ b,
+        |a, b| a ^ b,
+        |mut a, b| a ^= b,
+        |mut a, b| a ^= b,
+        |a, b| a.xor(b),
+        |mut a, b| a.xor_inplace(b),
+    )
 }
 
 fn sub(c: &mut Criterion) {
-    binary_op(c, "sub", |a, b| a - b, |a, b| a - b, |mut a, b| a -= b, |mut a, b| a -= b)
+    binary_op(
+        c,
+        "sub",
+        |a, b| a - b,
+        |a, b| a - b,
+        |mut a, b| a -= b,
+        |mut a, b| a -= b,
+        |a, b| a.andnot(b),
+        |mut a, b| a.andnot_inplace(b),
+    )
 }
 
 // cmp

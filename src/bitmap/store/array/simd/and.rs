@@ -1,9 +1,9 @@
 use crate::bitmap::store::array::simd::lut::SHUFFLE_MASK;
 use crate::simd::compat::{swizzle_u16x8, to_bitmask};
 use crate::simd::util::{matrix_cmp, store};
+use core_simd::{u16x8, u8x16, Simd};
 use mem::transmute;
 use std::mem;
-use std::simd::{u16x8, u8x16, Simd};
 
 // From Schlegel et al., Fast Sorted-Set Intersection using SIMD Instructions
 //

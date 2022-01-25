@@ -2,8 +2,8 @@ use crate::bitmap::store::array::simd::lut::UNIQUE_SHUF;
 use crate::bitmap::store::array::xor_array_walk_mut;
 use crate::simd::compat::{swizzle_u16x8, to_bitmask};
 use crate::simd::util::{simd_merge, store, Shr1, Shr2};
+use core_simd::{mask16x8, u16x8, u8x16, Simd, Swizzle2};
 use std::mem;
-use std::simd::{mask16x8, u16x8, u8x16, Simd, Swizzle2};
 
 // write vector new, while omitting repeated values assuming that previously
 // written vector was "old"
@@ -54,7 +54,7 @@ pub fn xor(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
 
     let v_a: u16x8 = Simd::from_slice(lhs);
     let v_b: u16x8 = Simd::from_slice(rhs);
-    let (mut v_min, mut v_max) = simd_merge(v_a, v_b);
+    let [mut v_min, mut v_max] = simd_merge(v_a, v_b);
 
     let mut i = 1;
     let mut j = 1;
@@ -84,11 +84,11 @@ pub fn xor(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
                     break;
                 }
             }
-            (v_min, v_max) = simd_merge(v, v_max);
+            [v_min, v_max] = simd_merge(v, v_max);
             k += store_unique_xor(v_prev, v_min, &mut out[k..]);
             v_prev = v_min;
         }
-        (v_min, v_max) = simd_merge(v, v_max);
+        [v_min, v_max] = simd_merge(v, v_max);
         k += store_unique_xor(v_prev, v_min, &mut out[k..]);
         v_prev = v_min;
     }

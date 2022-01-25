@@ -94,3 +94,24 @@ fn xor_combined_len_8192() {
 
     assert_eq!((0..8192).collect::<RoaringBitmap>(), rb3);
 }
+
+// Edge case for 128 bit SIMD
+#[test]
+fn or_self_len_8() {
+    let rb1 = (0..8).collect::<RoaringBitmap>();
+
+    let rb2 = &rb1 | &rb1;
+
+    assert_eq!((0..8).collect::<RoaringBitmap>(), rb2);
+}
+
+// Edge case for 128 bit SIMD
+// #[test]
+// fn or_combined_len_8192() {
+//     let rb1 = (0..4096).collect::<RoaringBitmap>();
+//     let rb2 = (4096..8192).collect::<RoaringBitmap>();
+//
+//     let rb3 = &rb1 | &rb2;
+//
+//     assert_eq!((0..8192).collect::<RoaringBitmap>(), rb3);
+// }

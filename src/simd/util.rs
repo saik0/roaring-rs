@@ -4,7 +4,7 @@
 //!
 //! functions that are generally useful, but not part of std
 
-use std::simd::{mask16x8, u16x8, LaneCount, Simd, SimdElement, SupportedLaneCount};
+use core_simd::{LaneCount, Mask, Simd, SimdElement, SupportedLaneCount};
 
 /// compute the min for each lane in `a` and `b`
 #[inline]
@@ -64,18 +64,22 @@ where
 
 /// Compare all lanes in `a` to all lanes in `b`
 ///
-/// A bit in the result mask will be set if any lane at `a[i]` is in any lane of `b`
+/// Returns result mask will be set if any lane at `a[i]` is in any lane of `b`
 ///
 /// ### Example
 /// ```ignore
 /// let a = Simd::from_array([1, 2, 3, 4, 32, 33, 34, 35]);
 /// let b = Simd::from_array([2, 4, 6, 8, 10, 12, 14, 16]);
 /// let result = matrix_cmp(a, b);
-/// assert_eq!(result, 0b00001010);
+/// assert_eq!(result, Mask::from_array([false, true, false, true, false, false, false, false]));
 /// ```
 #[inline]
-// TODO write with generics
-pub fn matrix_cmp(a: u16x8, b: u16x8) -> mask16x8 {
+// It would be nice to implement this for all supported lane counts
+// However, we currently only support u16x8 so it's not really necessary
+pub fn matrix_cmp<U>(a: Simd<U, 8>, b: Simd<U, 8>) -> Mask<<U as SimdElement>::Mask, 8>
+where
+    U: SimdElement + PartialEq,
+{
     a.lanes_eq(b)
         | a.lanes_eq(b.rotate_lanes_left::<1>())
         | a.lanes_eq(b.rotate_lanes_left::<2>())
@@ -86,7 +90,7 @@ pub fn matrix_cmp(a: u16x8, b: u16x8) -> mask16x8 {
         | a.lanes_eq(b.rotate_lanes_left::<7>())
 }
 
-use std::simd::{Swizzle2, Which, Which::First as A, Which::Second as B};
+use core_simd::{Swizzle2, Which, Which::First as A, Which::Second as B};
 
 pub struct Shr1;
 impl Swizzle2<8, 8> for Shr1 {
@@ -98,15 +102,18 @@ impl Swizzle2<8, 8> for Shr2 {
     const INDEX: [Which; 8] = [B(6), B(7), A(0), A(1), A(2), A(3), A(4), A(5)];
 }
 
-/// Assuming that a and b are sorted, returns a tuple of sorted output.
+/// Assuming that a and b are sorted, returns an array of the sorted output.
 /// Developed originally for merge sort using SIMD instructions.
 /// Standard merge. See, e.g., Inoue and Taura, SIMD- and Cache-Friendly
 /// Algorithm for Sorting an Array of Structures
-pub fn simd_merge(a: u16x8, b: u16x8) -> (u16x8, u16x8) {
-    let mut tmp: u16x8 = lanes_min(a, b);
-    let mut max: u16x8 = lanes_max(a, b);
+pub fn simd_merge<U>(a: Simd<U, 8>, b: Simd<U, 8>) -> [Simd<U, 8>; 2]
+where
+    U: SimdElement + PartialOrd,
+{
+    let mut tmp: Simd<U, 8> = lanes_min(a, b);
+    let mut max: Simd<U, 8> = lanes_max(a, b);
     tmp = tmp.rotate_lanes_left::<1>();
-    let mut min: u16x8 = lanes_min(tmp, max);
+    let mut min: Simd<U, 8> = lanes_min(tmp, max);
     for _ in 0..6 {
         max = lanes_max(tmp, max);
         tmp = min.rotate_lanes_left::<1>();
@@ -114,5 +121,5 @@ pub fn simd_merge(a: u16x8, b: u16x8) -> (u16x8, u16x8) {
     }
     max = lanes_max(tmp, max);
     min = min.rotate_lanes_left::<1>();
-    (min, max)
+    [min, max]
 }

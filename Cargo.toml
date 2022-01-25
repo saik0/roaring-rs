@@ -20,9 +20,10 @@ byteorder = "1.4.3"
 retain_mut = "0.1.4"
 itertools = "0.10.3"
 likely_stable = "0.1"
+core_simd = { git = "https://github.com/rust-lang/portable-simd" }
 
 [dev-dependencies]
 proptest = { version = "1.0.0" }
 
 [profile.test]
-opt-level = 2
+opt-level = 0

@@ -1,9 +1,9 @@
 use crate::bitmap::store::array::simd::lut::SHUFFLE_MASK;
 use crate::simd::compat::{swizzle_u16x8, to_bitmask};
 use crate::simd::util::{matrix_cmp, store};
+use core_simd::{u16x8, u8x16, Simd};
 use std::cmp::Ordering::{Greater, Less};
 use std::mem;
-use std::simd::{u16x8, u8x16, Simd};
 
 pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     const VECTOR_LENGTH: usize = mem::size_of::<u16x8>() / mem::size_of::<u16>();

@@ -2,8 +2,8 @@ use crate::bitmap::store::array::simd::lut::UNIQUE_SHUF;
 use crate::bitmap::store::array::util::or_array_walk_mut;
 use crate::simd::compat::{swizzle_u16x8, to_bitmask};
 use crate::simd::util::{simd_merge, store, Shr1};
+use core_simd::{u16x8, u8x16, Simd, Swizzle2};
 use std::mem;
-use std::simd::{u16x8, u8x16, Simd, Swizzle2};
 
 #[inline]
 fn store_unique(old: u16x8, newval: u16x8, output: &mut [u16]) -> usize {
@@ -46,7 +46,7 @@ pub fn or(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
 
     let v_a: u16x8 = Simd::from_slice(lhs);
     let v_b: u16x8 = Simd::from_slice(rhs);
-    let (mut v_min, mut v_max) = simd_merge(v_a, v_b);
+    let [mut v_min, mut v_max] = simd_merge(v_a, v_b);
 
     let mut i = 1;
     let mut j = 1;
@@ -75,11 +75,11 @@ pub fn or(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
                     break;
                 }
             }
-            (v_min, v_max) = simd_merge(v, v_max);
+            [v_min, v_max] = simd_merge(v, v_max);
             k += store_unique(v_prev, v_min, &mut out[k..]);
             v_prev = v_min;
         }
-        (v_min, v_max) = simd_merge(v, v_max);
+        [v_min, v_max] = simd_merge(v, v_max);
         k += store_unique(v_prev, v_min, &mut out[k..]);
         v_prev = v_min;
     }
