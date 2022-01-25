@@ -140,6 +140,32 @@ pub fn and_assign_walk(lhs: &mut Vec<u16>, rhs: &[u16]) {
     lhs.truncate(k);
 }
 
+pub fn and_assign_walk_mut(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
+    let mut i = 0;
+    let mut j = 0;
+    let mut k = 0;
+    while i < lhs.len() && j < rhs.len() {
+        let a = unsafe { lhs.get_unchecked(i) };
+        let b = unsafe { rhs.get_unchecked(j) };
+        match a.cmp(b) {
+            Less => {
+                i += 1;
+            }
+            Greater => {
+                j += 1;
+            }
+            Equal => {
+                unsafe { *out.get_unchecked_mut(k) = *a };
+                i += 1;
+                j += 1;
+                k += 1;
+            }
+        }
+    }
+
+    k
+}
+
 //#[inline(never)]
 // #[inline]
 pub fn and_assign_run(lhs: &mut Vec<u16>, rhs: &[u16]) {
@@ -687,6 +713,40 @@ pub fn sub_walk(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     vec.extend_from_slice(&lhs[i..]);
 
     vec
+}
+
+pub fn sub_walk_mut(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
+    // Traverse both arrays
+    let mut i = 0;
+    let mut j = 0;
+    let mut k = 0;
+    while i < lhs.len() && j < rhs.len() {
+        let a = unsafe { lhs.get_unchecked(i) };
+        let b = unsafe { rhs.get_unchecked(j) };
+        match a.cmp(b) {
+            Less => {
+                unsafe {
+                    *out.get_unchecked_mut(k) = *a;
+                }
+                i += 1;
+                k += 1;
+            }
+            Greater => j += 1,
+            Equal => {
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+
+    // Store remaining elements of the left array
+    if i < lhs.len() {
+        let n = lhs.len() - i;
+        out[k..k + n].copy_from_slice(&lhs[i..]);
+        k += n;
+    }
+
+    k
 }
 
 #[inline]

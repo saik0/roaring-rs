@@ -1,7 +1,6 @@
-use crate::bitmap::store::array::simd::lut::unique_swizzle;
-use crate::bitmap::store::array::simd::{matrix_cmp, store};
+use crate::bitmap::store::array::simd::{matrix_cmp, store, unique_swizzle};
+use crate::bitmap::store::array::sub_walk_mut;
 use core_simd::{u16x8, Simd};
-use std::cmp::Ordering::{Greater, Less};
 use std::mem;
 
 pub fn sub(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
@@ -91,36 +90,14 @@ pub fn sub(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
             i += VECTOR_LENGTH;
         }
         // at this point we should have i_a == st_a and i_b == st_b
-        // CRoaring comment says this is the case, but proptests panic if that's asserted
+        // CRoaring comment says this is the case, but tests panic if that's asserted
         // Is the comment wrong, or the code?
         //debug_assert_eq!(i, st_a);
         //debug_assert_eq!(j, st_b);
     }
 
     // do the tail using scalar code
-    // TODO can this call out to some array util instead?
-    while i < lhs.len() && j < rhs.len() {
-        let a = lhs[i];
-        let b = rhs[j];
-        let cmp = a.cmp(&b);
-        // match arms can be reordered, the ordering here is perf sensitive
-        if cmp == Greater {
-            j += 1;
-        } else if cmp == Less {
-            out[k] = a;
-            k += 1;
-            i += 1;
-        } else {
-            // cmp == Equal
-            i += 1;
-            j += 1;
-        }
-    }
-    if i < lhs.len() {
-        let n = lhs.len() - i;
-        out[k..k + n].copy_from_slice(&lhs[i..i + n]);
-        k += n;
-    }
+    k += sub_walk_mut(&lhs[i..], &rhs[j..], &mut out[k..]);
 
     out.truncate(k);
     out

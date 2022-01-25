@@ -1,8 +1,7 @@
-use crate::bitmap::store::array::simd::lut::unique_swizzle;
-
 use core_simd::{u16x8, Simd};
 
-use crate::bitmap::store::array::simd::{matrix_cmp, store};
+use crate::bitmap::store::array::and_assign_walk_mut;
+use crate::bitmap::store::array::simd::{matrix_cmp, store, unique_swizzle};
 use std::mem;
 
 // From Schlegel et al., Fast Sorted-Set Intersection using SIMD Instructions
@@ -63,26 +62,9 @@ pub fn and(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
 
     // intersect the tail using scalar intersection
     // TODO finish up by calling normal scalar walk/run fn instead this inlined walk?
-    // Safety:
-    //  * Unchecked indexing safe given the condition of the loop
 
-    while i < lhs.len() && j < rhs.len() {
-        let a: u16 = lhs[i];
-        let b: u16 = rhs[j];
+    k += and_assign_walk_mut(&lhs[i..], &rhs[j..], &mut out[k..]);
 
-        // Match arms can be reordered and this is a performance sensitive loop
-        #[allow(clippy::comparison_chain)]
-        if a < b {
-            i += 1;
-        } else if a > b {
-            j += 1;
-        } else {
-            out[k] = a; //==b;
-            k += 1;
-            i += 1;
-            j += 1;
-        }
-    }
     out.truncate(k);
     out
 }

@@ -1,5 +1,4 @@
-use crate::bitmap::store::array::simd::lut::unique_swizzle;
-use crate::bitmap::store::array::simd::{simd_merge, store, Shr1, Shr2};
+use crate::bitmap::store::array::simd::{simd_merge, store, unique_swizzle, Shr1, Shr2};
 use crate::bitmap::store::array::xor_array_walk_mut;
 use core_simd::{mask16x8, u16x8, Simd, Swizzle2};
 
