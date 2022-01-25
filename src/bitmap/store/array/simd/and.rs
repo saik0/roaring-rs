@@ -1,8 +1,8 @@
 use crate::bitmap::store::array::simd::lut::unique_swizzle;
 
-use crate::simd::util::{matrix_cmp, store};
 use core_simd::{u16x8, Simd};
 
+use crate::bitmap::store::array::simd::{matrix_cmp, store};
 use std::mem;
 
 // From Schlegel et al., Fast Sorted-Set Intersection using SIMD Instructions

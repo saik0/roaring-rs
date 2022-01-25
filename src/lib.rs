@@ -15,8 +15,6 @@
 
 extern crate byteorder;
 
-mod simd;
-
 use std::error::Error;
 use std::fmt;
 
