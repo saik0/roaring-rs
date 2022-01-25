@@ -1,4 +1,4 @@
-use crate::bitmap::store::array::simd::lut::{unique_swizzle, SHUFFLE_MASK};
+use crate::bitmap::store::array::simd::lut::unique_swizzle;
 use crate::simd::compat::to_bitmask;
 use crate::simd::util::{matrix_cmp, store};
 use core_simd::{u16x8, u8x16, Simd};
