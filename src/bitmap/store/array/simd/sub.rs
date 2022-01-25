@@ -5,7 +5,7 @@ use core_simd::{u16x8, u8x16, Simd};
 use std::cmp::Ordering::{Greater, Less};
 use std::mem;
 
-pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
+pub fn sub(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
     const VECTOR_LENGTH: usize = mem::size_of::<u16x8>() / mem::size_of::<u16>();
 
     // we handle the degenerate cases
@@ -15,13 +15,28 @@ pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
         return lhs.to_vec();
     }
 
+    let mut out = vec![0; lhs.len().max(rhs.len()) + 4096];
+    let mut k = 0;
+
+    // Why do we have to special case zero?
+    if (lhs[0] == 0) || (rhs[0] == 0) {
+        if (lhs[0] == 0) && (rhs[0] == 0) {
+            lhs = &lhs[1..];
+            rhs = &rhs[1..];
+        } else if lhs[0] == 0 {
+            out[k] = 0;
+            k += 1;
+            lhs = &lhs[1..];
+        } else {
+            rhs = &rhs[1..];
+        }
+    }
+
     let st_a = (lhs.len() / VECTOR_LENGTH) * VECTOR_LENGTH;
     let st_b = (rhs.len() / VECTOR_LENGTH) * VECTOR_LENGTH;
 
-    let mut out = vec![0; lhs.len().max(rhs.len()) + 4096];
     let mut i = 0;
     let mut j = 0;
-    let mut k = 0;
     if (i < st_a) && (j < st_b) {
         let mut v_a: u16x8 = Simd::from_slice(&lhs[i..]);
         let mut v_b: u16x8 = Simd::from_slice(&rhs[j..]);
