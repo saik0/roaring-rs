@@ -3,8 +3,6 @@ use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, S
 
 use retain_mut::RetainMut;
 
-use crate::bitmap::container::Container;
-
 use crate::bitmap::Pairs;
 use crate::RoaringBitmap;
 
@@ -183,7 +181,7 @@ impl RoaringBitmap {
     }
 
     #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
-    fn or_assign_cur(&mut self, rhs: &RoaringBitmap) {
+    pub fn or_assign_cur(&mut self, rhs: &RoaringBitmap) {
         for container in &rhs.containers {
             let key = container.key;
             match self.containers.binary_search_by_key(&key, |c| c.key) {
@@ -571,7 +569,7 @@ impl RoaringBitmap {
                 (Some(lhs), None) => containers.push(lhs.clone()),
                 (None, Some(rhs)) => containers.push(rhs.clone()),
                 (Some(lhs), Some(rhs)) => {
-                    let container = lhs.xor_std_simd(rhs);
+                    let container = lhs.xor_simd(rhs);
                     if container.len() != 0 {
                         containers.push(container);
                     }
@@ -605,9 +603,8 @@ impl BitOr<RoaringBitmap> for RoaringBitmap {
     type Output = RoaringBitmap;
 
     /// An `union` between two sets.
-    fn bitor(mut self, rhs: RoaringBitmap) -> RoaringBitmap {
-        BitOrAssign::bitor_assign(&mut self, rhs);
-        self
+    fn bitor(self, rhs: RoaringBitmap) -> RoaringBitmap {
+        self.or_simd(&rhs)
     }
 }
 
@@ -615,9 +612,8 @@ impl BitOr<&RoaringBitmap> for RoaringBitmap {
     type Output = RoaringBitmap;
 
     /// An `union` between two sets.
-    fn bitor(mut self, rhs: &RoaringBitmap) -> RoaringBitmap {
-        BitOrAssign::bitor_assign(&mut self, rhs);
-        self
+    fn bitor(self, rhs: &RoaringBitmap) -> RoaringBitmap {
+        self.or_simd(rhs)
     }
 }
 
@@ -626,7 +622,7 @@ impl BitOr<RoaringBitmap> for &RoaringBitmap {
 
     /// An `union` between two sets.
     fn bitor(self, rhs: RoaringBitmap) -> RoaringBitmap {
-        BitOr::bitor(rhs, self)
+        self.or_simd(&rhs)
     }
 }
 
@@ -635,23 +631,23 @@ impl BitOr<&RoaringBitmap> for &RoaringBitmap {
 
     /// An `union` between two sets.
     fn bitor(self, rhs: &RoaringBitmap) -> RoaringBitmap {
-        self.or_cur(rhs)
+        self.or_simd(rhs)
     }
 }
 
 impl BitOrAssign<RoaringBitmap> for RoaringBitmap {
     /// An `union` between two sets.
-    fn bitor_assign(&mut self, mut rhs: RoaringBitmap) {
+    fn bitor_assign(&mut self, rhs: RoaringBitmap) {
         // TODO this removed a optimization where we steal containers.
         // DO NOT MERGE
-        self.or_assign_cur(&rhs)
+        self.or_assign_simd(&rhs)
     }
 }
 
 impl BitOrAssign<&RoaringBitmap> for RoaringBitmap {
     /// An `union` between two sets.
     fn bitor_assign(&mut self, rhs: &RoaringBitmap) {
-        self.or_assign_cur(rhs)
+        self.or_assign_simd(rhs)
     }
 }
 
@@ -659,9 +655,8 @@ impl BitAnd<RoaringBitmap> for RoaringBitmap {
     type Output = RoaringBitmap;
 
     /// An `intersection` between two sets.
-    fn bitand(mut self, rhs: RoaringBitmap) -> RoaringBitmap {
-        BitAndAssign::bitand_assign(&mut self, rhs);
-        self
+    fn bitand(self, rhs: RoaringBitmap) -> RoaringBitmap {
+        self.and_simd(&rhs)
     }
 }
 
@@ -669,9 +664,8 @@ impl BitAnd<&RoaringBitmap> for RoaringBitmap {
     type Output = RoaringBitmap;
 
     /// An `intersection` between two sets.
-    fn bitand(mut self, rhs: &RoaringBitmap) -> RoaringBitmap {
-        BitAndAssign::bitand_assign(&mut self, rhs);
-        self
+    fn bitand(self, rhs: &RoaringBitmap) -> RoaringBitmap {
+        self.and_simd(rhs)
     }
 }
 
@@ -680,7 +674,7 @@ impl BitAnd<RoaringBitmap> for &RoaringBitmap {
 
     /// An `intersection` between two sets.
     fn bitand(self, rhs: RoaringBitmap) -> RoaringBitmap {
-        BitAnd::bitand(rhs, self)
+        self.and_simd(&rhs)
     }
 }
 
@@ -689,28 +683,24 @@ impl BitAnd<&RoaringBitmap> for &RoaringBitmap {
 
     /// An `intersection` between two sets.
     fn bitand(self, rhs: &RoaringBitmap) -> RoaringBitmap {
-        self.and_cur(rhs)
+        self.and_simd(rhs)
     }
 }
 
 impl BitAndAssign<RoaringBitmap> for RoaringBitmap {
     /// An `intersection` between two sets.
-    fn bitand_assign(&mut self, mut rhs: RoaringBitmap) {
+    fn bitand_assign(&mut self, rhs: RoaringBitmap) {
         // We make sure that we apply the intersection operation on the smallest map.
-        if rhs.len() < self.len() {
-            mem::swap(self, &mut rhs);
-        }
-
         // TODO this removed a optimization where we steal containers.
 
-        self.and_assign_cur(&rhs)
+        self.and_assign_simd(&rhs)
     }
 }
 
 impl BitAndAssign<&RoaringBitmap> for RoaringBitmap {
     /// An `intersection` between two sets.
     fn bitand_assign(&mut self, rhs: &RoaringBitmap) {
-        self.and_assign_cur(rhs)
+        self.and_assign_simd(rhs)
     }
 }
 
@@ -718,9 +708,8 @@ impl Sub<RoaringBitmap> for RoaringBitmap {
     type Output = RoaringBitmap;
 
     /// A `difference` between two sets.
-    fn sub(mut self, rhs: RoaringBitmap) -> RoaringBitmap {
-        SubAssign::sub_assign(&mut self, &rhs);
-        self
+    fn sub(self, rhs: RoaringBitmap) -> RoaringBitmap {
+        self.sub_simd(&rhs)
     }
 }
 
@@ -728,9 +717,8 @@ impl Sub<&RoaringBitmap> for RoaringBitmap {
     type Output = RoaringBitmap;
 
     /// A `difference` between two sets.
-    fn sub(mut self, rhs: &RoaringBitmap) -> RoaringBitmap {
-        SubAssign::sub_assign(&mut self, rhs);
-        self
+    fn sub(self, rhs: &RoaringBitmap) -> RoaringBitmap {
+        self.sub_simd(rhs)
     }
 }
 
@@ -739,7 +727,7 @@ impl Sub<RoaringBitmap> for &RoaringBitmap {
 
     /// A `difference` between two sets.
     fn sub(self, rhs: RoaringBitmap) -> RoaringBitmap {
-        Sub::sub(self, &rhs)
+        self.sub_simd(&rhs)
     }
 }
 
@@ -748,21 +736,21 @@ impl Sub<&RoaringBitmap> for &RoaringBitmap {
 
     /// A `difference` between two sets.
     fn sub(self, rhs: &RoaringBitmap) -> RoaringBitmap {
-        self.sub_cur(rhs)
+        self.sub_simd(rhs)
     }
 }
 
 impl SubAssign<RoaringBitmap> for RoaringBitmap {
     /// A `difference` between two sets.
     fn sub_assign(&mut self, rhs: RoaringBitmap) {
-        SubAssign::sub_assign(self, &rhs)
+        self.sub_assign_simd(&rhs)
     }
 }
 
 impl SubAssign<&RoaringBitmap> for RoaringBitmap {
     /// A `difference` between two sets.
     fn sub_assign(&mut self, rhs: &RoaringBitmap) {
-        self.sub_assign_cur(rhs)
+        self.sub_assign_simd(rhs)
     }
 }
 
@@ -770,9 +758,8 @@ impl BitXor<RoaringBitmap> for RoaringBitmap {
     type Output = RoaringBitmap;
 
     /// A `symmetric difference` between two sets.
-    fn bitxor(mut self, rhs: RoaringBitmap) -> RoaringBitmap {
-        BitXorAssign::bitxor_assign(&mut self, rhs);
-        self
+    fn bitxor(self, rhs: RoaringBitmap) -> RoaringBitmap {
+        self.xor_simd(&rhs)
     }
 }
 
@@ -780,9 +767,8 @@ impl BitXor<&RoaringBitmap> for RoaringBitmap {
     type Output = RoaringBitmap;
 
     /// A `symmetric difference` between two sets.
-    fn bitxor(mut self, rhs: &RoaringBitmap) -> RoaringBitmap {
-        BitXorAssign::bitxor_assign(&mut self, rhs);
-        self
+    fn bitxor(self, rhs: &RoaringBitmap) -> RoaringBitmap {
+        self.xor_simd(rhs)
     }
 }
 
@@ -791,7 +777,7 @@ impl BitXor<RoaringBitmap> for &RoaringBitmap {
 
     /// A `symmetric difference` between two sets.
     fn bitxor(self, rhs: RoaringBitmap) -> RoaringBitmap {
-        BitXor::bitxor(rhs, self)
+        self.xor_simd(&rhs)
     }
 }
 
@@ -800,20 +786,20 @@ impl BitXor<&RoaringBitmap> for &RoaringBitmap {
 
     /// A `symmetric difference` between two sets.
     fn bitxor(self, rhs: &RoaringBitmap) -> RoaringBitmap {
-        self.xor_cur(rhs)
+        self.xor_simd(rhs)
     }
 }
 
 impl BitXorAssign<RoaringBitmap> for RoaringBitmap {
     /// A `symmetric difference` between two sets.
     fn bitxor_assign(&mut self, rhs: RoaringBitmap) {
-        self.xor_assign_cur(&rhs)
+        self.xor_assign_simd(&rhs)
     }
 }
 
 impl BitXorAssign<&RoaringBitmap> for RoaringBitmap {
     /// A `symmetric difference` between two sets.
     fn bitxor_assign(&mut self, rhs: &RoaringBitmap) {
-        self.xor_assign_cur(rhs)
+        self.xor_assign_simd(rhs)
     }
 }

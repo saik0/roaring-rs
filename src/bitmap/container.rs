@@ -249,15 +249,15 @@ impl Container {
     // ░░░░░░░░╚═╝░░╚═╝░╚════╝░╚═╝░░╚═╝░░░░░░░░
     // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 
-    pub fn xor_std_simd(&self, rhs: &Container) -> Container {
-        let store = self.store.and_simd(&rhs.store);
+    pub fn xor_simd(&self, rhs: &Container) -> Container {
+        let store = self.store.xor_simd(&rhs.store);
         let mut container = Container { key: self.key, store };
         container.ensure_correct_store();
         container
     }
 
     pub fn xor_assign_simd(&mut self, rhs: &Container) {
-        self.store.and_assign_simd(&rhs.store);
+        self.store.xor_assign_simd(&rhs.store);
         self.ensure_correct_store();
     }
 }
