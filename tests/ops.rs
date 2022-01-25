@@ -154,7 +154,7 @@ proptest! {
     }
 
     #[test]
-    fn proptest_xor(a in btree_set(0u32..4096, ..=4096), b in btree_set(0u32..4096, ..=4096)) {
+    fn proptest_xor(a in btree_set(0u32..10, ..=10), b in btree_set(0u32..10, ..=10)) {
         let x = RoaringBitmap::from_sorted_iter(a.iter().cloned()).unwrap();
         let y = RoaringBitmap::from_sorted_iter(b.iter().cloned()).unwrap();
 

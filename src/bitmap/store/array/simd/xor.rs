@@ -40,12 +40,13 @@ fn xor_slice(slice: &mut [u16]) -> usize {
 }
 
 // a one-pass SSE xor algorithm
-pub fn xor(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
+pub fn xor(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
     let mut out = vec![0; lhs.len() + rhs.len()];
+    let mut k = 0;
 
     if (lhs.len() < 8) || (rhs.len() < 8) {
-        let len = xor_array_walk_mut(lhs, rhs, out.as_mut_slice());
-        out.truncate(len);
+        k += xor_array_walk_mut(lhs, rhs, &mut out[k..]);
+        out.truncate(k);
         return out;
     }
 
@@ -58,7 +59,6 @@ pub fn xor(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
 
     let mut i = 1;
     let mut j = 1;
-    let mut k = 0;
     let mut v_prev: u16x8 = v_min;
     k += store_unique_xor(Simd::splat(u16::MAX), v_min, &mut out[k..]);
 
@@ -101,6 +101,49 @@ pub fn xor(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     // TODO: 17? WHY?!?
     let mut buffer: [u16; 17] = [0; 17];
     // remaining size
+    // let mut rem = store_unique_xor(v_prev, v_max, &mut buffer);
+    // let arr_max = v_max.as_array();
+    // let vec7 = arr_max[7];
+    // let vec6 = arr_max[6];
+    // if vec6 != vec7 {
+    //     buffer[rem] = vec7;
+    //     rem += 1;
+    // }
+    // if i == len1 {
+    //     let n = lhs.len() - 8 * len1;
+    //     buffer[rem..rem + n].copy_from_slice(&lhs[8 * i..]);
+    //     rem += n;
+    //     if rem == 0 {
+    //         // trivial case
+    //         out[k..k + len2].copy_from_slice(&rhs[j..j + len2]);
+    //         k += len2 - j;
+    //         // memcpy(output, array2 + 8 * pos2,
+    //         //        (length2 - 8 * pos2) * sizeof(uint16_t));
+    //         // len += (length2 - 8 * pos2);
+    //     } else {
+    //         buffer[..rem as usize].sort_unstable();
+    //         rem = xor_slice(&mut buffer[..rem]);
+    //         k += xor_array_walk_mut(&buffer[..rem], &rhs[8 * j..], &mut out[k..]);
+    //     }
+    // } else {
+    //     let n = rhs.len() - 8 * len2;
+    //     buffer[rem..rem + n].copy_from_slice(&rhs[8 * j..]);
+    //     rem += n;
+    //     if rem == 0 {
+    //         // trivial case
+    //         out[k..k + len1].copy_from_slice(&lhs[i..i + len1]);
+    //         k += len1 - i;
+    //         // memcpy(output, array1 + 8 * pos1,
+    //         //        (length1 - 8 * pos1) * sizeof(uint16_t));
+    //         // len += (length1 - 8 * pos1);
+    //     } else {
+    //         buffer[..rem as usize].sort_unstable();
+    //         rem = xor_slice(&mut buffer[..rem]);
+    //         k += xor_array_walk_mut(&buffer[..rem], &lhs[8 * i..], &mut out[k..]);
+    //     }
+    // }
+
+    // remaining size
     let mut rem = store_unique_xor(v_prev, v_max, &mut buffer);
     let arr_max = v_max.as_array();
     let vec7 = arr_max[7];
@@ -109,39 +152,83 @@ pub fn xor(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
         buffer[rem] = vec7;
         rem += 1;
     }
-    if i == len1 {
-        let n = lhs.len() - 8 * len1;
-        buffer[rem..rem + n].copy_from_slice(&lhs[8 * i..]);
-        rem += n;
-        if rem == 0 {
+    if (i == len1) {
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                lhs.as_ptr().add(8 * i),
+                buffer.as_mut_ptr().add(rem),
+                (lhs.len() - 8 * len1),
+            );
+        }
+        // buffer[rem..lhs.len() - 8 * len1 + rem]
+        //     .copy_from_slice(&lhs[8 * i..8 * i + (lhs.len() - 8 * len1)]);
+        // memcpy(buffer + leftoversize, lhs.as_ptr().add(8 * pos1),
+        //        (length1 - 8 * len1) * sizeof(uint16_t));
+        rem += lhs.len() - 8 * len1;
+        if (rem == 0) {
             // trivial case
-            out[k..k + len2].copy_from_slice(&rhs[j..j + len2]);
-            k += len2 - j;
-            // memcpy(output, array2 + 8 * pos2,
-            //        (length2 - 8 * pos2) * sizeof(uint16_t));
-            // len += (length2 - 8 * pos2);
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    rhs.as_ptr().add(8 * j),
+                    out.as_mut_ptr().add(k),
+                    rhs.len() - 8 * j,
+                );
+            }
+
+            k += (rhs.len() - 8 * j);
         } else {
             buffer[..rem as usize].sort_unstable();
+            //qsort(buffer, leftoversize, sizeof(uint16_t), uint16_compare);
             rem = xor_slice(&mut buffer[..rem]);
-            k += xor_array_walk_mut(&buffer[..rem], &rhs[8 * j..], &mut out[k..]);
+            k += xor_array_walk_mut(
+                &buffer[..rem],
+                &rhs[8 * j..(8 * j) + rhs.len() - 8 * j],
+                &mut out[k..],
+            );
         }
     } else {
-        let n = rhs.len() - 8 * len2;
-        buffer[rem..rem + n].copy_from_slice(&rhs[8 * j..]);
-        rem += n;
-        if rem == 0 {
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                rhs.as_ptr().add(8 * j),
+                buffer.as_mut_ptr().add(rem),
+                (rhs.len() - 8 * len2),
+            );
+        }
+        // buffer[rem..rhs.len() - 8 * len2 + rem]
+        //     .copy_from_slice(&rhs[8 * j..8 * j + (rhs.len() - 8 * len2)]);
+        rem += rhs.len() - 8 * len2;
+
+        // memcpy(buffer + leftoversize, array2 + 8 * pos2,
+        //        (length2 - 8 * len2) * sizeof(uint16_t));
+        // leftoversize += length2 - 8 * len2;
+        if (rem == 0) {
             // trivial case
-            out[k..k + len1].copy_from_slice(&lhs[i..i + len1]);
-            k += len1 - i;
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    lhs.as_ptr().add(8 * i),
+                    out.as_mut_ptr().add(k),
+                    lhs.len() - 8 * i,
+                );
+            }
+
             // memcpy(output, array1 + 8 * pos1,
             //        (length1 - 8 * pos1) * sizeof(uint16_t));
-            // len += (length1 - 8 * pos1);
+            rem += (lhs.len() - 8 * i);
         } else {
             buffer[..rem as usize].sort_unstable();
+            //qsort(buffer, leftoversize, sizeof(uint16_t), uint16_compare);
             rem = xor_slice(&mut buffer[..rem]);
-            k += xor_array_walk_mut(&buffer[..rem], &lhs[8 * i..], &mut out[k..]);
+            //leftoversize = unique_xor(buffer, leftoversize);
+            k += xor_array_walk_mut(
+                &buffer[..rem],
+                &lhs[8 * i..(8 * i) + lhs.len() - 8 * i],
+                &mut out[k..],
+            );
+            // len += xor_uint16(buffer, leftoversize, array1 + 8 * pos1,
+            //                   length1 - 8 * pos1, output);
         }
     }
+
     out.truncate(k);
     out
 }
