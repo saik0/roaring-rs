@@ -19,21 +19,6 @@ use roaring::RoaringBitmap;
 
 type DirectoryName = &'static str;
 
-// const DATASETS: &[&str] = &[
-//     CENSUS1881,
-// ];
-
-// const DATASETS: &[&str] = &[
-//     CENSUS1881,
-//     CENSUS_INCOME,
-//     WEATHER_SEPT_85,
-//     WIKILEAKS_NOQUOTES
-// ];
-
-// const DATASETS: &[&str] = &[
-//     WEATHER_SEPT_85,
-// ];
-
 const DATASETS: &[&str] = &[
     // CENSUS1881,
     // CENSUS1881_SRT,
@@ -215,12 +200,16 @@ fn binary_op(
     op_ref: impl Fn(RoaringBitmap, &RoaringBitmap) -> RoaringBitmap,
     op_assign_owned: impl Fn(RoaringBitmap, RoaringBitmap),
     op_assign_ref: impl Fn(RoaringBitmap, &RoaringBitmap),
+    op_x86_simd: impl Fn(RoaringBitmap, &RoaringBitmap) -> RoaringBitmap,
+    op_assign_x86_simd: impl Fn(RoaringBitmap, &RoaringBitmap),
+    op_simd: impl Fn(RoaringBitmap, &RoaringBitmap) -> RoaringBitmap,
+    op_assign_simd: impl Fn(RoaringBitmap, &RoaringBitmap),
     op_c: impl Fn(Bitmap, &Bitmap) -> Bitmap,
     op_c_assign: impl Fn(Bitmap, &Bitmap),
 ) {
     let mut group = c.benchmark_group(format!("pairwise_{}", op_name));
 
-    for (filename, bitmaps) in PARSED_DATASET_BITMAPS.iter() {
+    for (filename, bitmaps) in PARSED_DATASET_ARRAYS.iter() {
         // Number of bits
 
         // group.bench_function(BenchmarkId::new("own", filename), |b| {
@@ -235,12 +224,36 @@ fn binary_op(
         //     );
         // });
 
-        group.bench_function(BenchmarkId::new("ref", filename), |b| {
+        group.bench_function(BenchmarkId::new("cur", filename), |b| {
             b.iter_batched(
                 || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
                 |bitmaps| {
                     for (a, b) in bitmaps {
                         black_box(op_ref(a, &b));
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_function(BenchmarkId::new("x86", filename), |b| {
+            b.iter_batched(
+                || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+                |bitmaps| {
+                    for (a, b) in bitmaps {
+                        black_box(op_x86_simd(a, &b));
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_function(BenchmarkId::new("simd", filename), |b| {
+            b.iter_batched(
+                || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+                |bitmaps| {
+                    for (a, b) in bitmaps {
+                        black_box(op_simd(a, &b));
                     }
                 },
                 BatchSize::SmallInput,
@@ -259,25 +272,25 @@ fn binary_op(
         //     );
         // });
 
-        group.bench_function(BenchmarkId::new("assign_ref", filename), |b| {
-            b.iter_batched(
-                || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
-                |bitmaps| {
-                    for (a, b) in bitmaps {
-                        op_assign_ref(a, &b)
-                    }
-                },
-                BatchSize::SmallInput,
-            );
-        });
+        // group.bench_function(BenchmarkId::new("assign_ref", filename), |b| {
+        //     b.iter_batched(
+        //         || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
+        //         |bitmaps| {
+        //             for (a, b) in bitmaps {
+        //                 op_assign_ref(a, &b)
+        //             }
+        //         },
+        //         BatchSize::SmallInput,
+        //     );
+        // });
     }
     let c_arrays: Vec<(DirectoryName, Vec<croaring::Bitmap>)> =
-        DATASETS.iter().map(|&dir| (dir, parse_c_dir_bin(dir, "bin"))).collect();
+        DATASETS.iter().map(|&dir| (dir, parse_c_dir_bin(dir, "arrays"))).collect();
 
     for (filename, bitmaps) in c_arrays.iter() {
         // Number of bits
 
-        group.bench_function(BenchmarkId::new("c_ref", filename), |b| {
+        group.bench_function(BenchmarkId::new("c", filename), |b| {
             b.iter_batched(
                 || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
                 |bitmaps| {
@@ -289,7 +302,7 @@ fn binary_op(
             );
         });
 
-        group.bench_function(BenchmarkId::new("c_assign_ref", filename), |b| {
+        group.bench_function(BenchmarkId::new("c_in_place", filename), |b| {
             b.iter_batched(
                 || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
                 |bitmaps| {
@@ -355,7 +368,7 @@ fn and2(c: &mut Criterion) {
                 || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
                 |bitmaps| {
                     for (a, b) in bitmaps {
-                        black_box(a.and_std_simd(&b));
+                        black_box(a.and_simd(&b));
                     }
                 },
                 BatchSize::SmallInput,
@@ -487,7 +500,7 @@ fn and2(c: &mut Criterion) {
                 || bitmaps.iter().cloned().tuple_windows::<(_, _)>().collect::<Vec<_>>(),
                 |bitmaps| {
                     for (mut a, b) in bitmaps {
-                        a.and_assign_std_simd(&b);
+                        a.and_assign_simd(&b);
                     }
                 },
                 BatchSize::SmallInput,
@@ -675,10 +688,14 @@ fn and(c: &mut Criterion) {
     binary_op(
         c,
         "and",
-        |a, b| a & b,
-        |a, b| a & b,
-        |mut a, b| a &= b,
-        |mut a, b| a &= b,
+        |a, b| a.and_cur(&b),
+        |a, b| a.and_cur(&b),
+        |mut a, b| a.and_assign_cur(&b),
+        |mut a, b| a.and_assign_cur(&b),
+        |a, b| a.and_x86_simd(b),
+        |mut a, b| a.and_assign_x86_simd(b),
+        |a, b| a.and_simd(b),
+        |mut a, b| a.and_assign_simd(b),
         |a, b| a.and(b),
         |mut a, b| a.and_inplace(b),
     )
@@ -688,25 +705,16 @@ fn or(c: &mut Criterion) {
     binary_op(
         c,
         "or",
-        |a, b| a | b,
-        |a, b| a | b,
-        |mut a, b| a |= b,
-        |mut a, b| a |= b,
+        |a, b| a.or_cur(&b),
+        |a, b| a.or_cur(&b),
+        |mut a, b| a.or_assign_cur(&b),
+        |mut a, b| a.or_assign_cur(&b),
+        |a, b| a.or_x86_simd(b),
+        |mut a, b| a.or_assign_x86_simd(b),
+        |a, b| a.or_simd(b),
+        |mut a, b| a.or_assign_simd(b),
         |a, b| a.or(b),
         |mut a, b| a.or_inplace(b),
-    )
-}
-
-fn xor(c: &mut Criterion) {
-    binary_op(
-        c,
-        "xor",
-        |a, b| a ^ b,
-        |a, b| a ^ b,
-        |mut a, b| a ^= b,
-        |mut a, b| a ^= b,
-        |a, b| a.xor(b),
-        |mut a, b| a.xor_inplace(b),
     )
 }
 
@@ -714,12 +722,34 @@ fn sub(c: &mut Criterion) {
     binary_op(
         c,
         "sub",
-        |a, b| a - b,
-        |a, b| a - b,
-        |mut a, b| a -= b,
-        |mut a, b| a -= b,
+        |a, b| a.sub_cur(&b),
+        |a, b| a.sub_cur(&b),
+        |mut a, b| a.sub_assign_cur(&b),
+        |mut a, b| a.sub_assign_cur(&b),
+        |a, b| a.sub_x86_simd(b),
+        |mut a, b| a.sub_assign_x86_simd(b),
+        |a, b| a.sub_simd(b),
+        |mut a, b| a.sub_assign_simd(b),
         |a, b| a.andnot(b),
         |mut a, b| a.andnot_inplace(b),
+    )
+}
+
+fn xor(c: &mut Criterion) {
+    binary_op(
+        c,
+        "xor",
+        |a, b| a.xor_cur(&b),
+        |a, b| a.xor_cur(&b),
+        |mut a, b| a.xor_assign_cur(&b),
+        |mut a, b| a.xor_assign_cur(&b),
+        // no x86 xor simd
+        |a, b| a,
+        |mut a, b| {},
+        |a, b| a.xor_simd(b),
+        |mut a, b| a.xor_assign_simd(b),
+        |a, b| a.xor(b),
+        |mut a, b| a.xor_inplace(b),
     )
 }
 
@@ -1021,9 +1051,8 @@ criterion_group!(
     // successive_or,
 );
 
-// criterion_group!(ops, and, or, xor, sub);
+criterion_group!(ops, and, or, xor, sub);
 // criterion_group!(ops, and2, or2);
-criterion_group!(ops, and2);
 
 criterion_group!(create, creation);
 

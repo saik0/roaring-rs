@@ -119,6 +119,15 @@ impl Container {
         };
     }
 
+    // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+    // ░░░░░░░░░█████╗░██████╗░░░░░░░░░
+    // ░░░░░░░░██╔══██╗██╔══██╗░░░░░░░░
+    // ░░░░░░░░██║░░██║██████╔╝░░░░░░░░
+    // ░░░░░░░░██║░░██║██╔══██╗░░░░░░░░
+    // ░░░░░░░░╚█████╔╝██║░░██║░░░░░░░░
+    // ░░░░░░░░░╚════╝░╚═╝░░╚═╝░░░░░░░░
+    // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+
     pub fn or_x86_simd(&self, rhs: &Container) -> Container {
         let store = self.store.or_x86_simd(&rhs.store);
         let mut container = Container { key: self.key, store };
@@ -127,30 +136,30 @@ impl Container {
     }
 
     pub fn or_assign_x86_simd(&mut self, rhs: &Container) {
-        self.store.or_x86_simd(&rhs.store);
+        self.store.or_assign_x86_simd(&rhs.store);
         self.ensure_correct_store();
     }
 
-    pub fn and_x86_simd(&self, rhs: &Container) -> Container {
-        let store = self.store.and_x86_simd(&rhs.store);
+    pub fn or_simd(&self, rhs: &Container) -> Container {
+        let store = self.store.or_simd(&rhs.store);
         let mut container = Container { key: self.key, store };
         container.ensure_correct_store();
         container
     }
 
-    pub fn and_std_simd(&self, rhs: &Container) -> Container {
-        let store = self.store.and_simd(&rhs.store);
-        let mut container = Container { key: self.key, store };
-        container.ensure_correct_store();
-        container
+    pub fn or_assign_simd(&mut self, rhs: &Container) {
+        self.store.or_assign_simd(&rhs.store);
+        self.ensure_correct_store();
     }
 
-    pub fn and_opt_unsafe(&self, rhs: &Container) -> Container {
-        let store = self.store.and_opt_unsafe(&rhs.store);
-        let mut container = Container { key: self.key, store };
-        container.ensure_correct_store();
-        container
-    }
+    // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+    // ░░░░░░░░░█████╗░███╗░░██╗██████╗░░░░░░░░░
+    // ░░░░░░░░██╔══██╗████╗░██║██╔══██╗░░░░░░░░
+    // ░░░░░░░░███████║██╔██╗██║██║░░██║░░░░░░░░
+    // ░░░░░░░░██╔══██║██║╚████║██║░░██║░░░░░░░░
+    // ░░░░░░░░██║░░██║██║░╚███║██████╔╝░░░░░░░░
+    // ░░░░░░░░╚═╝░░╚═╝╚═╝░░╚══╝╚═════╝░░░░░░░░░
+    // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 
     pub fn and_assign_walk(&mut self, rhs: &Container) {
         self.store.and_assign_walk(&rhs.store);
@@ -162,9 +171,23 @@ impl Container {
         self.ensure_correct_store();
     }
 
+    pub fn and_opt_unsafe(&self, rhs: &Container) -> Container {
+        let store = self.store.and_opt_unsafe(&rhs.store);
+        let mut container = Container { key: self.key, store };
+        container.ensure_correct_store();
+        container
+    }
+
     pub fn and_assign_opt_unsafe(&mut self, rhs: &Container) {
         self.store.and_assign_opt_unsafe(&rhs.store);
         self.ensure_correct_store();
+    }
+
+    pub fn and_x86_simd(&self, rhs: &Container) -> Container {
+        let store = self.store.and_x86_simd(&rhs.store);
+        let mut container = Container { key: self.key, store };
+        container.ensure_correct_store();
+        container
     }
 
     pub fn and_assign_x86_simd(&mut self, rhs: &Container) {
@@ -172,8 +195,69 @@ impl Container {
         self.ensure_correct_store();
     }
 
-    pub fn and_assign_std_simd(&mut self, rhs: &Container) {
-        self.store.and_assign_std_simd(&rhs.store);
+    pub fn and_simd(&self, rhs: &Container) -> Container {
+        let store = self.store.and_simd(&rhs.store);
+        let mut container = Container { key: self.key, store };
+        container.ensure_correct_store();
+        container
+    }
+
+    pub fn and_assign_simd(&mut self, rhs: &Container) {
+        self.store.and_assign_simd(&rhs.store);
+        self.ensure_correct_store();
+    }
+
+    // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+    // ░░░░░░░░░██████╗██╗░░░██╗██████╗░░░░░░░░░
+    // ░░░░░░░░██╔════╝██║░░░██║██╔══██╗░░░░░░░░
+    // ░░░░░░░░╚█████╗░██║░░░██║██████╦╝░░░░░░░░
+    // ░░░░░░░░░╚═══██╗██║░░░██║██╔══██╗░░░░░░░░
+    // ░░░░░░░░██████╔╝╚██████╔╝██████╦╝░░░░░░░░
+    // ░░░░░░░░╚═════╝░░╚═════╝░╚═════╝░░░░░░░░░
+    // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+
+    pub fn sub_x86_simd(&self, rhs: &Container) -> Container {
+        let store = self.store.sub_x86_simd(&rhs.store);
+        let mut container = Container { key: self.key, store };
+        container.ensure_correct_store();
+        container
+    }
+
+    pub fn sub_assign_x86_simd(&mut self, rhs: &Container) {
+        self.store.sub_assign_x86_simd(&rhs.store);
+        self.ensure_correct_store();
+    }
+
+    pub fn sub_simd(&self, rhs: &Container) -> Container {
+        let store = self.store.sub_simd(&rhs.store);
+        let mut container = Container { key: self.key, store };
+        container.ensure_correct_store();
+        container
+    }
+
+    pub fn sub_assign_simd(&mut self, rhs: &Container) {
+        self.store.sub_assign_simd(&rhs.store);
+        self.ensure_correct_store();
+    }
+
+    // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+    // ░░░░░░░░██╗░░██╗░█████╗░██████╗░░░░░░░░░
+    // ░░░░░░░░╚██╗██╔╝██╔══██╗██╔══██╗░░░░░░░░
+    // ░░░░░░░░░╚███╔╝░██║░░██║██████╔╝░░░░░░░░
+    // ░░░░░░░░░██╔██╗░██║░░██║██╔══██╗░░░░░░░░
+    // ░░░░░░░░██╔╝╚██╗╚█████╔╝██║░░██║░░░░░░░░
+    // ░░░░░░░░╚═╝░░╚═╝░╚════╝░╚═╝░░╚═╝░░░░░░░░
+    // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+
+    pub fn xor_std_simd(&self, rhs: &Container) -> Container {
+        let store = self.store.and_simd(&rhs.store);
+        let mut container = Container { key: self.key, store };
+        container.ensure_correct_store();
+        container
+    }
+
+    pub fn xor_assign_simd(&mut self, rhs: &Container) {
+        self.store.and_assign_simd(&rhs.store);
         self.ensure_correct_store();
     }
 }

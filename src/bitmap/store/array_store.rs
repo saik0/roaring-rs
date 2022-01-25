@@ -248,7 +248,8 @@ impl BitOr<Self> for &ArrayStore {
     type Output = ArrayStore;
 
     fn bitor(self, rhs: Self) -> Self::Output {
-        or_simd(self, rhs)
+        or_array_array(self, rhs)
+        // or_simd(self, rhs)
     }
 }
 
@@ -256,15 +257,15 @@ impl BitAnd<Self> for &ArrayStore {
     type Output = ArrayStore;
 
     fn bitand(self, rhs: Self) -> Self::Output {
-        //and_array_array(self, rhs)
-        and_std_simd(self, rhs)
+        and_array_array(self, rhs)
+        // and_simd(self, rhs)
     }
 }
 
 impl BitAndAssign<&Self> for ArrayStore {
     fn bitand_assign(&mut self, rhs: &Self) {
-        //and_assign_array_array(self, rhs);
-        and_assign_std_simd(self, rhs);
+        and_assign_array_array(self, rhs);
+        // and_assign_simd(self, rhs);
     }
 }
 
@@ -278,13 +279,15 @@ impl Sub<Self> for &ArrayStore {
     type Output = ArrayStore;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        sub_simd(self, rhs)
+        sub_array_array_cur(self, rhs)
+        // sub_simd(self, rhs)
     }
 }
 
 impl SubAssign<&Self> for ArrayStore {
     fn sub_assign(&mut self, rhs: &Self) {
-        sub_assign_simd(self, rhs)
+        sub_assign_array_array_cur(self, rhs);
+        // sub_assign_simd(self, rhs)
     }
 }
 
@@ -298,13 +301,15 @@ impl BitXor<Self> for &ArrayStore {
     type Output = ArrayStore;
 
     fn bitxor(self, rhs: Self) -> Self::Output {
-        xor_simd(self, rhs)
+        xor_array_array_cur(self, rhs)
+        // xor_simd(self, rhs)
     }
 }
 
 impl BitXorAssign<&Self> for ArrayStore {
     fn bitxor_assign(&mut self, rhs: &Self) {
-        xor_assign_simd(self, rhs)
+        xor_assign_array_array_cur(self, rhs);
+        // xor_assign_simd(self, rhs)
     }
 }
 
@@ -417,13 +422,13 @@ pub fn and_assign_x86_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
     }
 }
 
-pub fn and_std_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
+pub fn and_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
     let mut x = lhs.clone();
-    and_assign_std_simd(&mut x, rhs);
+    and_assign_simd(&mut x, rhs);
     x
 }
 
-pub fn and_assign_std_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
+pub fn and_assign_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
     const THRESHOLD: usize = 64;
     if lhs.vec.len() * THRESHOLD < rhs.vec.len() {
         intersect_skewed_small_unchecked(&mut lhs.vec, rhs.as_slice());

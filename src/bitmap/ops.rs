@@ -157,16 +157,52 @@ impl RoaringBitmap {
         BitXorAssign::bitxor_assign(self, other)
     }
 
+    // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+    // ░░░░░░░░░█████╗░██████╗░░░░░░░░░
+    // ░░░░░░░░██╔══██╗██╔══██╗░░░░░░░░
+    // ░░░░░░░░██║░░██║██████╔╝░░░░░░░░
+    // ░░░░░░░░██║░░██║██╔══██╗░░░░░░░░
+    // ░░░░░░░░╚█████╔╝██║░░██║░░░░░░░░
+    // ░░░░░░░░░╚════╝░╚═╝░░╚═╝░░░░░░░░
+    // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
+    pub fn or_cur(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
+        let mut containers = Vec::new();
+
+        for pair in Pairs::new(&self.containers, &rhs.containers) {
+            match pair {
+                (Some(lhs), None) => containers.push(lhs.clone()),
+                (None, Some(rhs)) => containers.push(rhs.clone()),
+                (Some(lhs), Some(rhs)) => containers.push(BitOr::bitor(lhs, rhs)),
+                (None, None) => break,
+            }
+        }
+
+        RoaringBitmap { containers }
+    }
+
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
+    fn or_assign_cur(&mut self, rhs: &RoaringBitmap) {
+        for container in &rhs.containers {
+            let key = container.key;
+            match self.containers.binary_search_by_key(&key, |c| c.key) {
+                Err(loc) => self.containers.insert(loc, container.clone()),
+                Ok(loc) => BitOrAssign::bitor_assign(&mut self.containers[loc], container),
+            }
+        }
+    }
+
     #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
     pub fn or_x86_simd(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
         let mut containers = Vec::new();
 
         for pair in Pairs::new(&self.containers, &rhs.containers) {
-            if let (Some(lhs), Some(rhs)) = pair {
-                let container = lhs.or_x86_simd(rhs);
-                if container.len() != 0 {
-                    containers.push(container);
-                }
+            match pair {
+                (Some(lhs), None) => containers.push(lhs.clone()),
+                (None, Some(rhs)) => containers.push(rhs.clone()),
+                (Some(lhs), Some(rhs)) => containers.push(lhs.or_x86_simd(rhs)),
+                (None, None) => break,
             }
         }
 
@@ -185,12 +221,48 @@ impl RoaringBitmap {
     }
 
     #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
-    pub fn and_x86_simd(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
+    pub fn or_simd(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
+        let mut containers = Vec::new();
+
+        for pair in Pairs::new(&self.containers, &rhs.containers) {
+            match pair {
+                (Some(lhs), None) => containers.push(lhs.clone()),
+                (None, Some(rhs)) => containers.push(rhs.clone()),
+                (Some(lhs), Some(rhs)) => containers.push(lhs.or_simd(rhs)),
+                (None, None) => break,
+            }
+        }
+
+        RoaringBitmap { containers }
+    }
+
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
+    pub fn or_assign_simd(&mut self, rhs: &RoaringBitmap) {
+        for container in &rhs.containers {
+            let key = container.key;
+            match self.containers.binary_search_by_key(&key, |c| c.key) {
+                Err(loc) => self.containers.insert(loc, container.clone()),
+                Ok(loc) => self.containers[loc].or_assign_simd(container),
+            }
+        }
+    }
+
+    // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+    // ░░░░░░░░░█████╗░███╗░░██╗██████╗░░░░░░░░░
+    // ░░░░░░░░██╔══██╗████╗░██║██╔══██╗░░░░░░░░
+    // ░░░░░░░░███████║██╔██╗██║██║░░██║░░░░░░░░
+    // ░░░░░░░░██╔══██║██║╚████║██║░░██║░░░░░░░░
+    // ░░░░░░░░██║░░██║██║░╚███║██████╔╝░░░░░░░░
+    // ░░░░░░░░╚═╝░░╚═╝╚═╝░░╚══╝╚═════╝░░░░░░░░░
+    // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
+    pub fn and_cur(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
         let mut containers = Vec::new();
 
         for pair in Pairs::new(&self.containers, &rhs.containers) {
             if let (Some(lhs), Some(rhs)) = pair {
-                let container = lhs.and_x86_simd(rhs);
+                let container = BitAnd::bitand(lhs, rhs);
                 if container.len() != 0 {
                     containers.push(container);
                 }
@@ -201,35 +273,17 @@ impl RoaringBitmap {
     }
 
     #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
-    pub fn and_std_simd(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
-        let mut containers = Vec::new();
-
-        for pair in Pairs::new(&self.containers, &rhs.containers) {
-            if let (Some(lhs), Some(rhs)) = pair {
-                let container = lhs.and_std_simd(rhs);
-                if container.len() != 0 {
-                    containers.push(container);
+    pub fn and_assign_cur(&mut self, rhs: &RoaringBitmap) {
+        RetainMut::retain_mut(&mut self.containers, |cont| {
+            let key = cont.key;
+            match rhs.containers.binary_search_by_key(&key, |c| c.key) {
+                Ok(loc) => {
+                    BitAndAssign::bitand_assign(cont, &rhs.containers[loc]);
+                    cont.len() != 0
                 }
+                Err(_) => false,
             }
-        }
-
-        RoaringBitmap { containers }
-    }
-
-    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
-    pub fn and_opt_unsafe(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
-        let mut containers = Vec::new();
-
-        for pair in Pairs::new(&self.containers, &rhs.containers) {
-            if let (Some(lhs), Some(rhs)) = pair {
-                let container = lhs.and_opt_unsafe(rhs);
-                if container.len() != 0 {
-                    containers.push(container);
-                }
-            }
-        }
-
-        RoaringBitmap { containers }
+        })
     }
 
     #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
@@ -261,6 +315,22 @@ impl RoaringBitmap {
     }
 
     #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
+    pub fn and_opt_unsafe(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
+        let mut containers = Vec::new();
+
+        for pair in Pairs::new(&self.containers, &rhs.containers) {
+            if let (Some(lhs), Some(rhs)) = pair {
+                let container = lhs.and_opt_unsafe(rhs);
+                if container.len() != 0 {
+                    containers.push(container);
+                }
+            }
+        }
+
+        RoaringBitmap { containers }
+    }
+
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
     pub fn and_assign_opt_unsafe(&mut self, rhs: &RoaringBitmap) {
         RetainMut::retain_mut(&mut self.containers, |cont| {
             let key = cont.key;
@@ -272,6 +342,22 @@ impl RoaringBitmap {
                 Err(_) => false,
             }
         })
+    }
+
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
+    pub fn and_x86_simd(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
+        let mut containers = Vec::new();
+
+        for pair in Pairs::new(&self.containers, &rhs.containers) {
+            if let (Some(lhs), Some(rhs)) = pair {
+                let container = lhs.and_x86_simd(rhs);
+                if container.len() != 0 {
+                    containers.push(container);
+                }
+            }
+        }
+
+        RoaringBitmap { containers }
     }
 
     #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
@@ -289,17 +375,229 @@ impl RoaringBitmap {
     }
 
     #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
-    pub fn and_assign_std_simd(&mut self, rhs: &RoaringBitmap) {
+    pub fn and_simd(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
+        let mut containers = Vec::new();
+
+        for pair in Pairs::new(&self.containers, &rhs.containers) {
+            if let (Some(lhs), Some(rhs)) = pair {
+                let container = lhs.and_simd(rhs);
+                if container.len() != 0 {
+                    containers.push(container);
+                }
+            }
+        }
+
+        RoaringBitmap { containers }
+    }
+
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
+    pub fn and_assign_simd(&mut self, rhs: &RoaringBitmap) {
         RetainMut::retain_mut(&mut self.containers, |cont| {
             let key = cont.key;
             match rhs.containers.binary_search_by_key(&key, |c| c.key) {
                 Ok(loc) => {
-                    cont.and_assign_std_simd(&rhs.containers[loc]);
+                    cont.and_assign_simd(&rhs.containers[loc]);
                     cont.len() != 0
                 }
                 Err(_) => false,
             }
         })
+    }
+
+    // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+    // ░░░░░░░░░██████╗██╗░░░██╗██████╗░░░░░░░░░
+    // ░░░░░░░░██╔════╝██║░░░██║██╔══██╗░░░░░░░░
+    // ░░░░░░░░╚█████╗░██║░░░██║██████╦╝░░░░░░░░
+    // ░░░░░░░░░╚═══██╗██║░░░██║██╔══██╗░░░░░░░░
+    // ░░░░░░░░██████╔╝╚██████╔╝██████╦╝░░░░░░░░
+    // ░░░░░░░░╚═════╝░░╚═════╝░╚═════╝░░░░░░░░░
+    // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
+    pub fn sub_cur(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
+        let mut containers = Vec::new();
+
+        for pair in Pairs::new(&self.containers, &rhs.containers) {
+            match pair {
+                (Some(lhs), None) => containers.push(lhs.clone()),
+                (None, Some(_)) => (),
+                (Some(lhs), Some(rhs)) => {
+                    let container = Sub::sub(lhs, rhs);
+                    if container.len() != 0 {
+                        containers.push(container);
+                    }
+                }
+                (None, None) => break,
+            }
+        }
+
+        RoaringBitmap { containers }
+    }
+
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
+    pub fn sub_assign_cur(&mut self, rhs: &RoaringBitmap) {
+        RetainMut::retain_mut(&mut self.containers, |cont| {
+            match rhs.containers.binary_search_by_key(&cont.key, |c| c.key) {
+                Ok(loc) => {
+                    SubAssign::sub_assign(cont, &rhs.containers[loc]);
+                    cont.len() != 0
+                }
+                Err(_) => true,
+            }
+        })
+    }
+
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
+    pub fn sub_x86_simd(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
+        let mut containers = Vec::new();
+
+        for pair in Pairs::new(&self.containers, &rhs.containers) {
+            match pair {
+                (Some(lhs), None) => containers.push(lhs.clone()),
+                (None, Some(_)) => (),
+                (Some(lhs), Some(rhs)) => {
+                    let container = lhs.sub_x86_simd(rhs);
+                    if container.len() != 0 {
+                        containers.push(container);
+                    }
+                }
+                (None, None) => break,
+            }
+        }
+
+        RoaringBitmap { containers }
+    }
+
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
+    pub fn sub_assign_x86_simd(&mut self, rhs: &RoaringBitmap) {
+        RetainMut::retain_mut(&mut self.containers, |cont| {
+            match rhs.containers.binary_search_by_key(&cont.key, |c| c.key) {
+                Ok(loc) => {
+                    cont.sub_assign_x86_simd(&rhs.containers[loc]);
+                    cont.len() != 0
+                }
+                Err(_) => true,
+            }
+        })
+    }
+
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
+    pub fn sub_simd(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
+        let mut containers = Vec::new();
+
+        for pair in Pairs::new(&self.containers, &rhs.containers) {
+            match pair {
+                (Some(lhs), None) => containers.push(lhs.clone()),
+                (None, Some(_)) => (),
+                (Some(lhs), Some(rhs)) => {
+                    let container = lhs.sub_simd(rhs);
+                    if container.len() != 0 {
+                        containers.push(container);
+                    }
+                }
+                (None, None) => break,
+            }
+        }
+
+        RoaringBitmap { containers }
+    }
+
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
+    pub fn sub_assign_simd(&mut self, rhs: &RoaringBitmap) {
+        RetainMut::retain_mut(&mut self.containers, |cont| {
+            match rhs.containers.binary_search_by_key(&cont.key, |c| c.key) {
+                Ok(loc) => {
+                    cont.sub_assign_simd(&rhs.containers[loc]);
+                    cont.len() != 0
+                }
+                Err(_) => true,
+            }
+        })
+    }
+
+    // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+    // ░░░░░░░░██╗░░██╗░█████╗░██████╗░░░░░░░░░
+    // ░░░░░░░░╚██╗██╔╝██╔══██╗██╔══██╗░░░░░░░░
+    // ░░░░░░░░░╚███╔╝░██║░░██║██████╔╝░░░░░░░░
+    // ░░░░░░░░░██╔██╗░██║░░██║██╔══██╗░░░░░░░░
+    // ░░░░░░░░██╔╝╚██╗╚█████╔╝██║░░██║░░░░░░░░
+    // ░░░░░░░░╚═╝░░╚═╝░╚════╝░╚═╝░░╚═╝░░░░░░░░
+    // ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
+    pub fn xor_cur(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
+        let mut containers = Vec::new();
+
+        for pair in Pairs::new(&self.containers, &rhs.containers) {
+            match pair {
+                (Some(lhs), None) => containers.push(lhs.clone()),
+                (None, Some(rhs)) => containers.push(rhs.clone()),
+                (Some(lhs), Some(rhs)) => {
+                    let container = BitXor::bitxor(lhs, rhs);
+                    if container.len() != 0 {
+                        containers.push(container);
+                    }
+                }
+                (None, None) => break,
+            }
+        }
+
+        RoaringBitmap { containers }
+    }
+
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
+    pub fn xor_assign_cur(&mut self, rhs: &RoaringBitmap) {
+        for pair in Pairs::new(mem::take(&mut self.containers), &rhs.containers) {
+            match pair {
+                (Some(mut lhs), Some(rhs)) => {
+                    BitXorAssign::bitxor_assign(&mut lhs, rhs);
+                    if lhs.len() != 0 {
+                        self.containers.push(lhs);
+                    }
+                }
+                (Some(lhs), None) => self.containers.push(lhs),
+                (None, Some(rhs)) => self.containers.push(rhs.clone()),
+                (None, None) => break,
+            }
+        }
+    }
+
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
+    pub fn xor_simd(&self, rhs: &RoaringBitmap) -> RoaringBitmap {
+        let mut containers = Vec::new();
+
+        for pair in Pairs::new(&self.containers, &rhs.containers) {
+            match pair {
+                (Some(lhs), None) => containers.push(lhs.clone()),
+                (None, Some(rhs)) => containers.push(rhs.clone()),
+                (Some(lhs), Some(rhs)) => {
+                    let container = lhs.xor_std_simd(rhs);
+                    if container.len() != 0 {
+                        containers.push(container);
+                    }
+                }
+                (None, None) => break,
+            }
+        }
+
+        RoaringBitmap { containers }
+    }
+
+    #[allow(missing_docs)] // TODO Remove. This is for benchmark cmp.
+    pub fn xor_assign_simd(&mut self, rhs: &RoaringBitmap) {
+        for pair in Pairs::new(mem::take(&mut self.containers), &rhs.containers) {
+            match pair {
+                (Some(mut lhs), Some(rhs)) => {
+                    lhs.xor_assign_simd(rhs);
+                    if lhs.len() != 0 {
+                        self.containers.push(lhs);
+                    }
+                }
+                (Some(lhs), None) => self.containers.push(lhs),
+                (None, Some(rhs)) => self.containers.push(rhs.clone()),
+                (None, None) => break,
+            }
+        }
     }
 }
 
@@ -337,49 +635,23 @@ impl BitOr<&RoaringBitmap> for &RoaringBitmap {
 
     /// An `union` between two sets.
     fn bitor(self, rhs: &RoaringBitmap) -> RoaringBitmap {
-        let mut containers = Vec::new();
-
-        for pair in Pairs::new(&self.containers, &rhs.containers) {
-            match pair {
-                (Some(lhs), None) => containers.push(lhs.clone()),
-                (None, Some(rhs)) => containers.push(rhs.clone()),
-                (Some(lhs), Some(rhs)) => containers.push(BitOr::bitor(lhs, rhs)),
-                (None, None) => break,
-            }
-        }
-
-        RoaringBitmap { containers }
+        self.or_cur(rhs)
     }
 }
 
 impl BitOrAssign<RoaringBitmap> for RoaringBitmap {
     /// An `union` between two sets.
     fn bitor_assign(&mut self, mut rhs: RoaringBitmap) {
-        // We make sure that we apply the union operation on the biggest map.
-        if self.len() < rhs.len() {
-            mem::swap(self, &mut rhs);
-        }
-
-        for container in rhs.containers {
-            let key = container.key;
-            match self.containers.binary_search_by_key(&key, |c| c.key) {
-                Err(loc) => self.containers.insert(loc, container),
-                Ok(loc) => BitOrAssign::bitor_assign(&mut self.containers[loc], container),
-            }
-        }
+        // TODO this removed a optimization where we steal containers.
+        // DO NOT MERGE
+        self.or_assign_cur(&rhs)
     }
 }
 
 impl BitOrAssign<&RoaringBitmap> for RoaringBitmap {
     /// An `union` between two sets.
     fn bitor_assign(&mut self, rhs: &RoaringBitmap) {
-        for container in &rhs.containers {
-            let key = container.key;
-            match self.containers.binary_search_by_key(&key, |c| c.key) {
-                Err(loc) => self.containers.insert(loc, container.clone()),
-                Ok(loc) => BitOrAssign::bitor_assign(&mut self.containers[loc], container),
-            }
-        }
+        self.or_assign_cur(rhs)
     }
 }
 
@@ -417,18 +689,7 @@ impl BitAnd<&RoaringBitmap> for &RoaringBitmap {
 
     /// An `intersection` between two sets.
     fn bitand(self, rhs: &RoaringBitmap) -> RoaringBitmap {
-        let mut containers = Vec::new();
-
-        for pair in Pairs::new(&self.containers, &rhs.containers) {
-            if let (Some(lhs), Some(rhs)) = pair {
-                let container = BitAnd::bitand(lhs, rhs);
-                if container.len() != 0 {
-                    containers.push(container);
-                }
-            }
-        }
-
-        RoaringBitmap { containers }
+        self.and_cur(rhs)
     }
 }
 
@@ -440,34 +701,16 @@ impl BitAndAssign<RoaringBitmap> for RoaringBitmap {
             mem::swap(self, &mut rhs);
         }
 
-        RetainMut::retain_mut(&mut self.containers, |cont| {
-            let key = cont.key;
-            match rhs.containers.binary_search_by_key(&key, |c| c.key) {
-                Ok(loc) => {
-                    let rhs_cont = &mut rhs.containers[loc];
-                    let rhs_cont = mem::replace(rhs_cont, Container::new(rhs_cont.key));
-                    BitAndAssign::bitand_assign(cont, rhs_cont);
-                    cont.len() != 0
-                }
-                Err(_) => false,
-            }
-        })
+        // TODO this removed a optimization where we steal containers.
+
+        self.and_assign_cur(&rhs)
     }
 }
 
 impl BitAndAssign<&RoaringBitmap> for RoaringBitmap {
     /// An `intersection` between two sets.
     fn bitand_assign(&mut self, rhs: &RoaringBitmap) {
-        RetainMut::retain_mut(&mut self.containers, |cont| {
-            let key = cont.key;
-            match rhs.containers.binary_search_by_key(&key, |c| c.key) {
-                Ok(loc) => {
-                    BitAndAssign::bitand_assign(cont, &rhs.containers[loc]);
-                    cont.len() != 0
-                }
-                Err(_) => false,
-            }
-        })
+        self.and_assign_cur(rhs)
     }
 }
 
@@ -505,23 +748,7 @@ impl Sub<&RoaringBitmap> for &RoaringBitmap {
 
     /// A `difference` between two sets.
     fn sub(self, rhs: &RoaringBitmap) -> RoaringBitmap {
-        let mut containers = Vec::new();
-
-        for pair in Pairs::new(&self.containers, &rhs.containers) {
-            match pair {
-                (Some(lhs), None) => containers.push(lhs.clone()),
-                (None, Some(_)) => (),
-                (Some(lhs), Some(rhs)) => {
-                    let container = Sub::sub(lhs, rhs);
-                    if container.len() != 0 {
-                        containers.push(container);
-                    }
-                }
-                (None, None) => break,
-            }
-        }
-
-        RoaringBitmap { containers }
+        self.sub_cur(rhs)
     }
 }
 
@@ -535,15 +762,7 @@ impl SubAssign<RoaringBitmap> for RoaringBitmap {
 impl SubAssign<&RoaringBitmap> for RoaringBitmap {
     /// A `difference` between two sets.
     fn sub_assign(&mut self, rhs: &RoaringBitmap) {
-        RetainMut::retain_mut(&mut self.containers, |cont| {
-            match rhs.containers.binary_search_by_key(&cont.key, |c| c.key) {
-                Ok(loc) => {
-                    SubAssign::sub_assign(cont, &rhs.containers[loc]);
-                    cont.len() != 0
-                }
-                Err(_) => true,
-            }
-        })
+        self.sub_assign_cur(rhs)
     }
 }
 
@@ -581,60 +800,20 @@ impl BitXor<&RoaringBitmap> for &RoaringBitmap {
 
     /// A `symmetric difference` between two sets.
     fn bitxor(self, rhs: &RoaringBitmap) -> RoaringBitmap {
-        let mut containers = Vec::new();
-
-        for pair in Pairs::new(&self.containers, &rhs.containers) {
-            match pair {
-                (Some(lhs), None) => containers.push(lhs.clone()),
-                (None, Some(rhs)) => containers.push(rhs.clone()),
-                (Some(lhs), Some(rhs)) => {
-                    let container = BitXor::bitxor(lhs, rhs);
-                    if container.len() != 0 {
-                        containers.push(container);
-                    }
-                }
-                (None, None) => break,
-            }
-        }
-
-        RoaringBitmap { containers }
+        self.xor_cur(rhs)
     }
 }
 
 impl BitXorAssign<RoaringBitmap> for RoaringBitmap {
     /// A `symmetric difference` between two sets.
     fn bitxor_assign(&mut self, rhs: RoaringBitmap) {
-        for pair in Pairs::new(mem::take(&mut self.containers), rhs.containers) {
-            match pair {
-                (Some(mut lhs), Some(rhs)) => {
-                    BitXorAssign::bitxor_assign(&mut lhs, rhs);
-                    if lhs.len() != 0 {
-                        self.containers.push(lhs);
-                    }
-                }
-                (Some(lhs), None) => self.containers.push(lhs),
-                (None, Some(rhs)) => self.containers.push(rhs),
-                (None, None) => break,
-            }
-        }
+        self.xor_assign_cur(&rhs)
     }
 }
 
 impl BitXorAssign<&RoaringBitmap> for RoaringBitmap {
     /// A `symmetric difference` between two sets.
     fn bitxor_assign(&mut self, rhs: &RoaringBitmap) {
-        for pair in Pairs::new(mem::take(&mut self.containers), &rhs.containers) {
-            match pair {
-                (Some(mut lhs), Some(rhs)) => {
-                    BitXorAssign::bitxor_assign(&mut lhs, rhs);
-                    if lhs.len() != 0 {
-                        self.containers.push(lhs);
-                    }
-                }
-                (Some(lhs), None) => self.containers.push(lhs),
-                (None, Some(rhs)) => self.containers.push(rhs.clone()),
-                (None, None) => break,
-            }
-        }
+        self.xor_assign_cur(rhs)
     }
 }
