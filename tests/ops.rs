@@ -1,6 +1,5 @@
 extern crate roaring;
 
-use proptest::arbitrary::any;
 use proptest::collection::btree_set;
 use proptest::proptest;
 use roaring::RoaringBitmap;

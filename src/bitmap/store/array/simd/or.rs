@@ -1,9 +1,8 @@
 use crate::bitmap::store::array::simd::lut::unique_swizzle;
 use crate::bitmap::store::array::util::or_array_walk_mut;
-use crate::simd::compat::{swizzle_u16x8, to_bitmask};
+
 use crate::simd::util::{simd_merge, store, Shr1};
-use core_simd::{u16x8, u8x16, Simd, Swizzle2};
-use std::mem;
+use core_simd::{u16x8, Simd, Swizzle2};
 
 #[inline]
 fn store_unique(old: u16x8, newval: u16x8, output: &mut [u16]) -> usize {

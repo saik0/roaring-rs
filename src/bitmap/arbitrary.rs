@@ -161,7 +161,7 @@ mod test {
 
     impl Store {
         fn arbitrary() -> impl Strategy<Value = Store> {
-            ArrayStore::sampled(8..=100, ..=100 as usize).prop_map(Store::Array)
+            ArrayStore::sampled(8..=100, ..=100_usize).prop_map(Store::Array)
             // prop_oneof![
             //     ArrayStore::sampled(1..=4096, ..=u16::MAX as usize).prop_map(Store::Array),
             //     BitmapStore::sampled(4097..u16::MAX as usize, ..=u16::MAX as usize)

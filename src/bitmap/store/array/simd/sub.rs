@@ -1,7 +1,7 @@
 use crate::bitmap::store::array::simd::lut::unique_swizzle;
-use crate::simd::compat::{swizzle_u16x8, to_bitmask};
+
 use crate::simd::util::{matrix_cmp, store};
-use core_simd::{u16x8, u8x16, Simd};
+use core_simd::{u16x8, Simd};
 use std::cmp::Ordering::{Greater, Less};
 use std::mem;
 

@@ -36,7 +36,7 @@ fn xor_slice(slice: &mut [u16]) -> usize {
 }
 
 // a one-pass SSE xor algorithm
-pub fn xor(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
+pub fn xor(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     let mut out = vec![0; lhs.len() + rhs.len()];
     let mut k = 0;
 
@@ -110,7 +110,7 @@ pub fn xor(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
         rem += lhs.len() - 8 * len1;
         if rem == 0 {
             out[k..k + rhs.len() - 8 * j].copy_from_slice(&rhs[8 * j..(8 * j) + rhs.len() - 8 * j]);
-            k += (rhs.len() - 8 * j);
+            k += rhs.len() - 8 * j;
         } else {
             buffer[..rem as usize].sort_unstable();
             rem = xor_slice(&mut buffer[..rem]);
@@ -127,7 +127,7 @@ pub fn xor(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
         if rem == 0 {
             out[k..k + (lhs.len() - 8 * i)]
                 .copy_from_slice(&lhs[8 * i..(8 * i) + lhs.len() - 8 * i]);
-            k += (lhs.len() - 8 * i);
+            k += lhs.len() - 8 * i;
         } else {
             buffer[..rem as usize].sort_unstable();
             rem = xor_slice(&mut buffer[..rem]);
