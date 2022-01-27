@@ -1,7 +1,7 @@
-use core_simd::{u16x8, Simd};
+use core_simd::u16x8;
 
 use crate::bitmap::store::array::and_assign_walk_mut;
-use crate::bitmap::store::array::simd::{matrix_cmp, store, unique_swizzle};
+use crate::bitmap::store::array::simd::{load, matrix_cmp, store, unique_swizzle};
 use std::mem;
 
 // From Schlegel et al., Fast Sorted-Set Intersection using SIMD Instructions
@@ -24,8 +24,8 @@ pub fn and(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     if (i < st_a) && (j < st_b) {
         // Safety:
         //  * Unchecked loads fom lhs[i..] and rhs[j..] are safe given i < st_a && j < st_b
-        let mut v_a: u16x8 = Simd::from_slice(&lhs[i..]);
-        let mut v_b: u16x8 = Simd::from_slice(&rhs[j..]);
+        let mut v_a: u16x8 = load(&lhs[i..]);
+        let mut v_b: u16x8 = load(&rhs[j..]);
         loop {
             let r = matrix_cmp(v_a, v_b).to_bitmask()[0];
             let intersection = unique_swizzle(v_a, r);
@@ -37,8 +37,11 @@ pub fn and(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
 
             // Safety:
             //  * Must be in bounds given i < st_a && j < st_b checks
-            let a_max: u16 = lhs[i + VEC_LEN - 1];
-            let b_max: u16 = rhs[j + VEC_LEN - 1];
+            // let a_max: u16 = lhs[i + VEC_LEN - 1];
+            // let b_max: u16 = rhs[j + VEC_LEN - 1];
+
+            let a_max: u16 = unsafe { *lhs.get_unchecked(i + VEC_LEN - 1) };
+            let b_max: u16 = unsafe { *rhs.get_unchecked(j + VEC_LEN - 1) };
             if a_max <= b_max {
                 i += VEC_LEN;
                 if i == st_a {
@@ -46,7 +49,7 @@ pub fn and(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
                 }
                 // Safety:
                 //  * Unchecked loads fom lhs[i..] is save given i != st_a
-                v_a = Simd::from_slice(&lhs[i..]);
+                v_a = load(&lhs[i..]);
             }
             if b_max <= a_max {
                 j += VEC_LEN;
@@ -55,14 +58,12 @@ pub fn and(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
                 }
                 // Safety:
                 //  * Unchecked loads fom rhs[j..] is save given j != st_b
-                v_b = Simd::from_slice(&rhs[j..]);
+                v_b = load(&rhs[j..]);
             }
         }
     }
 
     // intersect the tail using scalar intersection
-    // TODO finish up by calling normal scalar walk/run fn instead this inlined walk?
-
     k += and_assign_walk_mut(&lhs[i..], &rhs[j..], &mut out[k..]);
 
     out.truncate(k);

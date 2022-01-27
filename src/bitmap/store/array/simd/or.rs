@@ -1,6 +1,6 @@
 use crate::bitmap::store::array::util::or_array_walk_mut;
 
-use crate::bitmap::store::array::simd::{simd_merge, store, unique_swizzle, Shr1};
+use crate::bitmap::store::array::simd::{load, simd_merge, store, unique_swizzle, Shr1};
 use core_simd::{u16x8, Simd, Swizzle2};
 
 #[inline]
@@ -13,14 +13,41 @@ fn store_unique(old: u16x8, newval: u16x8, output: &mut [u16]) -> usize {
     count
 }
 
+#[inline]
+#[allow(dead_code)]
+fn get_debug_asserted<T>(slice: &[T], index: usize) -> T
+where
+    T: Copy,
+{
+    debug_assert!(index < slice.len());
+    unsafe { *slice.get_unchecked(index) }
+}
+
+#[inline]
+#[allow(dead_code)]
+fn get_checked<T>(slice: &[T], index: usize) -> T
+where
+    T: Copy,
+{
+    slice[index]
+}
+
+#[inline]
+fn get_idx<T>(slice: &[T], index: usize) -> T
+where
+    T: Copy,
+{
+    get_debug_asserted(slice, index)
+}
+
 /// De-duplicates `slice` in place
 /// Returns the end index of the deduplicated slice.
 /// elements after the return value are not guaranteed to be unique or in order
 fn dedup(slice: &mut [u16]) -> usize {
     let mut pos: usize = 1;
     for i in 1..slice.len() {
-        if slice[i] != slice[i - 1] {
-            slice[pos] = slice[i];
+        if get_idx(slice, i) != get_idx(slice, i - 1) {
+            slice[pos] = get_idx(slice, i);
             pos += 1;
         }
     }
@@ -40,8 +67,8 @@ pub fn or(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     let len1: usize = lhs.len() / 8;
     let len2: usize = rhs.len() / 8;
 
-    let v_a: u16x8 = Simd::from_slice(lhs);
-    let v_b: u16x8 = Simd::from_slice(rhs);
+    let v_a: u16x8 = load(lhs);
+    let v_b: u16x8 = load(rhs);
     let [mut v_min, mut v_max] = simd_merge(v_a, v_b);
 
     let mut i = 1;
@@ -51,22 +78,22 @@ pub fn or(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     let mut v_prev: u16x8 = v_min;
     if (i < len1) && (j < len2) {
         let mut v: u16x8;
-        let mut cur_a: u16 = lhs[8 * i];
-        let mut cur_b: u16 = rhs[8 * j];
+        let mut cur_a: u16 = get_idx(lhs, 8 * i);
+        let mut cur_b: u16 = get_idx(rhs, 8 * j);
         loop {
             if cur_a <= cur_b {
-                v = Simd::from_slice(&lhs[8 * i..]);
+                v = load(&lhs[8 * i..]);
                 i += 1;
                 if i < len1 {
-                    cur_a = lhs[8 * i];
+                    cur_a = get_idx(lhs, 8 * i);
                 } else {
                     break;
                 }
             } else {
-                v = Simd::from_slice(&rhs[8 * j..]);
+                v = load(&rhs[8 * j..]);
                 j += 1;
                 if j < len2 {
-                    cur_b = rhs[8 * j];
+                    cur_b = get_idx(rhs, 8 * j);
                 } else {
                     break;
                 }
@@ -79,6 +106,9 @@ pub fn or(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
         k += store_unique(v_prev, v_min, &mut out[k..]);
         v_prev = v_min;
     }
+
+    debug_assert!(i == len1 || j == len2);
+
     // we finish the rest off using a scalar algorithm
     // could be improved?
     //
@@ -86,21 +116,18 @@ pub fn or(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     let mut buffer: [u16; 16] = [0; 16];
     // remaining size
     let mut rem = store_unique(v_prev, v_max, &mut buffer);
-    if i == len1 {
-        let n = lhs.len() - 8 * len1;
-        buffer[rem..rem + n].copy_from_slice(&lhs[8 * i..]);
-        rem += n;
-        buffer[..rem as usize].sort_unstable();
-        rem = dedup(&mut buffer[..rem]);
-        k += or_array_walk_mut(&buffer[..rem], &rhs[8 * j..], &mut out[k..]);
-    } else {
-        let n = rhs.len() - 8 * len2;
-        buffer[rem..rem + n].copy_from_slice(&rhs[8 * j..]);
-        rem += n;
-        buffer[..rem as usize].sort_unstable();
-        rem = dedup(&mut buffer[..rem]);
-        k += or_array_walk_mut(&buffer[..rem], &lhs[8 * i..], &mut out[k..]);
-    }
+    let (tail_a, tail_b, tail_len) = {
+        if i == len1 {
+            (&lhs[8 * i..], &rhs[8 * j..], lhs.len() - 8 * len1)
+        } else {
+            (&rhs[8 * j..], &lhs[8 * i..], rhs.len() - 8 * len2)
+        }
+    };
+    buffer[rem..rem + tail_len].copy_from_slice(tail_a);
+    rem += tail_len;
+    buffer[..rem as usize].sort_unstable();
+    rem = dedup(&mut buffer[..rem]);
+    k += or_array_walk_mut(&buffer[..rem], tail_b, &mut out[k..]);
     out.truncate(k);
     out
 }

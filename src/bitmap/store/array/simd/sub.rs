@@ -1,9 +1,9 @@
-use crate::bitmap::store::array::simd::{matrix_cmp, store, unique_swizzle};
+use crate::bitmap::store::array::simd::{load, matrix_cmp, store, unique_swizzle};
 use crate::bitmap::store::array::sub_walk_mut;
 use core_simd::{u16x8, Simd};
 use std::mem;
 
-pub fn sub(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
+pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     const VECTOR_LENGTH: usize = mem::size_of::<u16x8>() / mem::size_of::<u16>();
 
     // we handle the degenerate cases
@@ -13,22 +13,8 @@ pub fn sub(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
         return lhs.to_vec();
     }
 
-    let mut out = vec![0; lhs.len().max(rhs.len()) + 4096];
+    let mut out = vec![0; lhs.len().max(rhs.len())];
     let mut k = 0;
-
-    // Why do we have to special case zero?
-    if (lhs[0] == 0) || (rhs[0] == 0) {
-        if (lhs[0] == 0) && (rhs[0] == 0) {
-            lhs = &lhs[1..];
-            rhs = &rhs[1..];
-        } else if lhs[0] == 0 {
-            out[k] = 0;
-            k += 1;
-            lhs = &lhs[1..];
-        } else {
-            rhs = &rhs[1..];
-        }
-    }
 
     let st_a = (lhs.len() / VECTOR_LENGTH) * VECTOR_LENGTH;
     let st_b = (rhs.len() / VECTOR_LENGTH) * VECTOR_LENGTH;
@@ -36,8 +22,8 @@ pub fn sub(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
     let mut i = 0;
     let mut j = 0;
     if (i < st_a) && (j < st_b) {
-        let mut v_a: u16x8 = Simd::from_slice(&lhs[i..]);
-        let mut v_b: u16x8 = Simd::from_slice(&rhs[j..]);
+        let mut v_a: u16x8 = load(&lhs[i..]);
+        let mut v_b: u16x8 = load(&rhs[j..]);
         // we have a runningmask which indicates which values from A have been
         // spotted in B, these don't get written out.
         let mut runningmask_a_found_in_b: u8 = 0;
@@ -62,7 +48,7 @@ pub fn sub(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
                     break;
                 }
                 runningmask_a_found_in_b = 0;
-                v_a = Simd::from_slice(&lhs[i..]);
+                v_a = load(&lhs[i..]);
             }
             if b_max <= a_max {
                 // in this code path, the current v_b has become useless
@@ -70,9 +56,12 @@ pub fn sub(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
                 if j == st_b {
                     break;
                 }
-                v_b = Simd::from_slice(&rhs[j..]);
+                v_b = load(&rhs[j..]);
             }
         }
+
+        debug_assert!(i == st_a || j == st_b);
+
         // End of main vectorized loop
         // At this point either i_a == st_a, which is the end of the vectorized processing,
         // or i_b == st_b and we are not done processing the vector...
@@ -89,11 +78,6 @@ pub fn sub(mut lhs: &[u16], mut rhs: &[u16]) -> Vec<u16> {
             k += bitmask_belongs_to_difference.count_ones() as usize;
             i += VECTOR_LENGTH;
         }
-        // at this point we should have i_a == st_a and i_b == st_b
-        // CRoaring comment says this is the case, but tests panic if that's asserted
-        // Is the comment wrong, or the code?
-        //debug_assert_eq!(i, st_a);
-        //debug_assert_eq!(j, st_b);
     }
 
     // do the tail using scalar code

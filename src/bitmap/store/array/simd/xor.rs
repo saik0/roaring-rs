@@ -1,4 +1,4 @@
-use crate::bitmap::store::array::simd::{simd_merge, store, unique_swizzle, Shr1, Shr2};
+use crate::bitmap::store::array::simd::{load, simd_merge, store, unique_swizzle, Shr1, Shr2};
 use crate::bitmap::store::array::xor_array_walk_mut;
 use core_simd::{mask16x8, u16x8, Simd, Swizzle2};
 
@@ -48,8 +48,8 @@ pub fn xor(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     let len1: usize = lhs.len() / 8;
     let len2: usize = rhs.len() / 8;
 
-    let v_a: u16x8 = Simd::from_slice(lhs);
-    let v_b: u16x8 = Simd::from_slice(rhs);
+    let v_a: u16x8 = load(lhs);
+    let v_b: u16x8 = load(rhs);
     let [mut v_min, mut v_max] = simd_merge(v_a, v_b);
 
     let mut i = 1;
@@ -63,7 +63,7 @@ pub fn xor(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
         let mut cur_b: u16 = rhs[8 * j];
         loop {
             if cur_a <= cur_b {
-                v = Simd::from_slice(&lhs[8 * i..]);
+                v = load(&lhs[8 * i..]);
                 i += 1;
                 if i < len1 {
                     cur_a = lhs[8 * i];
@@ -71,7 +71,7 @@ pub fn xor(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
                     break;
                 }
             } else {
-                v = Simd::from_slice(&rhs[8 * j..]);
+                v = load(&rhs[8 * j..]);
                 j += 1;
                 if j < len2 {
                     cur_b = rhs[8 * j];

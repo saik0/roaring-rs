@@ -417,7 +417,7 @@ pub fn and_assign_x86_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
     } else if rhs.vec.len() * THRESHOLD < lhs.vec.len() {
         intersect_skewed_large_unchecked(rhs.as_slice(), &mut lhs.vec);
     } else {
-        let mut buf = super::array::simd::and(lhs.as_slice(), rhs.as_slice());
+        let mut buf = super::array::simd::x86::and_x86_simd(lhs.as_slice(), rhs.as_slice());
         std::mem::swap(&mut lhs.vec, &mut buf);
     }
 }

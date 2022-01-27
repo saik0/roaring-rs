@@ -5,10 +5,10 @@ mod xor;
 
 pub mod x86;
 
-pub use and::and;
-pub use or::or;
-pub use sub::sub;
-pub use xor::xor;
+pub use and::*;
+pub use or::*;
+pub use sub::*;
+pub use xor::*;
 
 use core_simd::{simd_swizzle, u16x8, LaneCount, Mask, Simd, SimdElement, SupportedLaneCount};
 
@@ -39,7 +39,20 @@ where
     U: SimdElement + PartialOrd,
     LaneCount<LANES>: SupportedLaneCount,
 {
-    out[..LANES].copy_from_slice(&v.to_array())
+    debug_assert!(out.len() >= LANES);
+    unsafe {
+        store_unchecked(v, out);
+    }
+}
+
+#[inline]
+fn load<U, const LANES: usize>(src: &[U]) -> Simd<U, LANES>
+where
+    U: SimdElement + PartialOrd,
+    LaneCount<LANES>: SupportedLaneCount,
+{
+    debug_assert!(src.len() >= LANES);
+    unsafe { load_unchecked(src) }
 }
 
 /// write `v` to slice `out` without checking bounds
@@ -47,12 +60,12 @@ where
 /// ### Safety
 ///   - The caller must ensure `LANES` does not exceed the allocation for `out`
 #[inline]
-#[allow(dead_code)]
 unsafe fn store_unchecked<U, const LANES: usize>(v: Simd<U, LANES>, out: &mut [U])
 where
     U: SimdElement + PartialOrd,
     LaneCount<LANES>: SupportedLaneCount,
 {
+    // unsafe { std::ptr::write_unaligned(out as *mut _ as *mut [U; LANES], v.to_array()) }
     unsafe { std::ptr::write_unaligned(out as *mut _ as *mut Simd<U, LANES>, v) }
 }
 
@@ -61,7 +74,6 @@ where
 /// ### Safety
 ///   - The caller must ensure `LANES` does not exceed the allocation for `out`
 #[inline]
-#[allow(dead_code)]
 unsafe fn load_unchecked<U, const LANES: usize>(src: &[U]) -> Simd<U, LANES>
 where
     U: SimdElement + PartialOrd,
@@ -114,6 +126,7 @@ impl Swizzle2<8, 8> for Shr2 {
 /// Developed originally for merge sort using SIMD instructions.
 /// Standard merge. See, e.g., Inoue and Taura, SIMD- and Cache-Friendly
 /// Algorithm for Sorting an Array of Structures
+#[inline]
 fn simd_merge<U>(a: Simd<U, 8>, b: Simd<U, 8>) -> [Simd<U, 8>; 2]
 where
     U: SimdElement + PartialOrd,

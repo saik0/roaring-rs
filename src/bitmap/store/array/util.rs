@@ -2,6 +2,7 @@
 
 use std::cmp::Ordering;
 use std::cmp::Ordering::{Equal, Greater, Less};
+use std::ptr;
 
 pub fn or_array_walk(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     let mut vec = Vec::new();
@@ -35,25 +36,27 @@ pub fn or_array_walk(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     vec
 }
 
-pub fn or_array_walk_mut(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
+pub fn or_array_walk_mut_checked(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
+    assert!(out.len() >= lhs.len());
+    assert!(out.len() >= rhs.len());
     // Traverse both arrays
     let mut i = 0;
     let mut j = 0;
     let mut k = 0;
     while i < lhs.len() && j < rhs.len() {
-        let a = unsafe { lhs.get_unchecked(i) };
-        let b = unsafe { rhs.get_unchecked(j) };
-        match a.cmp(b) {
+        let a = lhs[i];
+        let b = rhs[j];
+        match a.cmp(&b) {
             Less => {
-                out[k] = *a;
+                out[k] = a;
                 i += 1;
             }
             Greater => {
-                out[k] = *b;
+                out[k] = b;
                 j += 1;
             }
             Equal => {
-                out[k] = *a;
+                out[k] = a;
                 i += 1;
                 j += 1;
             }
@@ -72,6 +75,51 @@ pub fn or_array_walk_mut(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
     }
 
     k
+}
+
+pub fn or_array_walk_mut_unchecked(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
+    debug_assert!(out.len() >= lhs.len());
+    debug_assert!(out.len() >= rhs.len());
+    // Traverse both arrays
+    let mut i = 0;
+    let mut j = 0;
+    let mut k = 0;
+    while i < lhs.len() && j < rhs.len() {
+        debug_assert!(k < out.len());
+        let a = unsafe { lhs.get_unchecked(i) };
+        let b = unsafe { rhs.get_unchecked(j) };
+        match a.cmp(b) {
+            Less => {
+                unsafe { *out.get_unchecked_mut(k) = *a }
+                i += 1;
+            }
+            Greater => {
+                unsafe { *out.get_unchecked_mut(k) = *b }
+                j += 1;
+            }
+            Equal => {
+                unsafe { *out.get_unchecked_mut(k) = *a }
+                i += 1;
+                j += 1;
+            }
+        }
+        k += 1;
+    }
+
+    let n = lhs.len() - i;
+    unsafe { ptr::copy_nonoverlapping(lhs.as_ptr().add(i), out.as_mut_ptr().add(k), n) }
+    k += n;
+
+    let n = rhs.len() - j;
+    unsafe { ptr::copy_nonoverlapping(rhs.as_ptr().add(j), out.as_mut_ptr().add(k), n) }
+    k += n;
+
+    k
+}
+
+#[inline]
+pub fn or_array_walk_mut(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
+    or_array_walk_mut_unchecked(lhs, rhs, out)
 }
 
 pub fn xor_array_walk_mut(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
@@ -140,7 +188,8 @@ pub fn and_assign_walk(lhs: &mut Vec<u16>, rhs: &[u16]) {
     lhs.truncate(k);
 }
 
-pub fn and_assign_walk_mut(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
+#[inline]
+fn _and_assign_walk_mut_checked(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
     let mut i = 0;
     let mut j = 0;
     let mut k = 0;
@@ -164,6 +213,37 @@ pub fn and_assign_walk_mut(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
     }
 
     k
+}
+
+#[inline]
+fn _and_assign_walk_mut_unchecked(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
+    let mut i = 0;
+    let mut j = 0;
+    let mut k = 0;
+    while i < lhs.len() && j < rhs.len() {
+        let a = unsafe { lhs.get_unchecked(i) };
+        let b = unsafe { rhs.get_unchecked(j) };
+        match a.cmp(b) {
+            Less => {
+                i += 1;
+            }
+            Greater => {
+                j += 1;
+            }
+            Equal => {
+                unsafe { *out.get_unchecked_mut(k) = *a };
+                i += 1;
+                j += 1;
+                k += 1;
+            }
+        }
+    }
+
+    k
+}
+
+pub fn and_assign_walk_mut(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
+    _and_assign_walk_mut_unchecked(lhs, rhs, out)
 }
 
 //#[inline(never)]
