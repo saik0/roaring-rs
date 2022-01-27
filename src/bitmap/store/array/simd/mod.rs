@@ -34,7 +34,7 @@ where
 
 /// write `v` to slice `out`
 #[inline]
-fn store<U, const LANES: usize>(v: Simd<U, LANES>, out: &mut [U])
+pub fn store<U, const LANES: usize>(v: Simd<U, LANES>, out: &mut [U])
 where
     U: SimdElement + PartialOrd,
     LaneCount<LANES>: SupportedLaneCount,
@@ -96,7 +96,7 @@ where
 #[inline]
 // It would be nice to implement this for all supported lane counts
 // However, we currently only support u16x8 so it's not really necessary
-fn matrix_cmp<U>(a: Simd<U, 8>, b: Simd<U, 8>) -> Mask<<U as SimdElement>::Mask, 8>
+pub fn matrix_cmp<U>(a: Simd<U, 8>, b: Simd<U, 8>) -> Mask<<U as SimdElement>::Mask, 8>
 where
     U: SimdElement + PartialEq,
 {

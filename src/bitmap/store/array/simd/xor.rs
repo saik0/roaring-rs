@@ -1,26 +1,25 @@
 use crate::bitmap::store::array::simd::{load, simd_merge, store, unique_swizzle, Shr1, Shr2};
 use crate::bitmap::store::array::xor_array_walk_mut;
+use crate::bitmap::store::array_store::visitor::ArrayBinaryOperationVisitor;
 use core_simd::{mask16x8, u16x8, Simd, Swizzle2};
 
 // write vector new, while omitting repeated values assuming that previously
 // written vector was "old"
 #[inline]
-fn store_unique_xor(old: u16x8, new: u16x8, output: &mut [u16]) -> usize {
+fn store_unique_xor(old: u16x8, new: u16x8, f: impl FnOnce(u16x8, u8)) {
     let tmp1: u16x8 = Shr2::swizzle2(new, old);
     let tmp2: u16x8 = Shr1::swizzle2(new, old);
     let eq_l: mask16x8 = tmp2.lanes_eq(tmp1);
     let eq_r: mask16x8 = tmp2.lanes_eq(new);
     let eq_l_or_r: mask16x8 = eq_l | eq_r;
     let mask: u8 = eq_l_or_r.to_bitmask()[0];
-    let count: usize = 8 - mask.count_ones() as usize;
-    let val: u16x8 = unique_swizzle(tmp2, 255 - mask);
-    store(val, output);
-    count
+    f(tmp2, 255 - mask);
 }
 
 /// De-duplicates `slice` in place, removing _both_ duplicates
 /// Returns the end index of the xor-ed slice.
 /// elements after the return value are not guaranteed to be unique or in order
+/// #[inline]
 fn xor_slice(slice: &mut [u16]) -> usize {
     let mut pos: usize = 1;
     for i in 1..slice.len() {
@@ -35,14 +34,10 @@ fn xor_slice(slice: &mut [u16]) -> usize {
 }
 
 // a one-pass SSE xor algorithm
-pub fn xor(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
-    let mut out = vec![0; lhs.len() + rhs.len()];
-    let mut k = 0;
-
+pub fn xor(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisitor) {
     if (lhs.len() < 8) || (rhs.len() < 8) {
-        k += xor_array_walk_mut(lhs, rhs, &mut out[k..]);
-        out.truncate(k);
-        return out;
+        xor_array_walk(lhs, rhs, visitor);
+        return;
     }
 
     let len1: usize = lhs.len() / 8;
@@ -54,9 +49,8 @@ pub fn xor(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
 
     let mut i = 1;
     let mut j = 1;
+    store_unique_xor(Simd::splat(u16::MAX), v_min, |v, m| visitor.visit_vector(v, m));
     let mut v_prev: u16x8 = v_min;
-    k += store_unique_xor(Simd::splat(u16::MAX), v_min, &mut out[k..]);
-
     if (i < len1) && (j < len2) {
         let mut v: u16x8;
         let mut cur_a: u16 = lhs[8 * i];
@@ -80,22 +74,28 @@ pub fn xor(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
                 }
             }
             [v_min, v_max] = simd_merge(v, v_max);
-            k += store_unique_xor(v_prev, v_min, &mut out[k..]);
+            store_unique_xor(v_prev, v_min, |v, m| visitor.visit_vector(v, m));
             v_prev = v_min;
         }
         [v_min, v_max] = simd_merge(v, v_max);
-        k += store_unique_xor(v_prev, v_min, &mut out[k..]);
+        store_unique_xor(v_prev, v_min, |v, m| visitor.visit_vector(v, m));
         v_prev = v_min;
     }
+
+    debug_assert!(i == len1 || j == len2);
 
     // we finish the rest off using a scalar algorithm
     // could be improved?
     // conditionally stores the last value of laststore as well as all but the
     // last value of vecMax,
-    //
-    // TODO: 17? WHY?!?
     let mut buffer: [u16; 17] = [0; 17];
-    let mut rem = store_unique_xor(v_prev, v_max, &mut buffer);
+    // remaining size
+    let mut rem = 0;
+    store_unique_xor(v_prev, v_max, |v, m| {
+        store(unique_swizzle(v, m), buffer.as_mut_slice());
+        rem = m.count_ones() as usize;
+    });
+
     let arr_max = v_max.as_array();
     let vec7 = arr_max[7];
     let vec6 = arr_max[6];
@@ -103,41 +103,49 @@ pub fn xor(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
         buffer[rem] = vec7;
         rem += 1;
     }
-    if i == len1 {
-        buffer[rem..lhs.len() - 8 * len1 + rem]
-            .copy_from_slice(&lhs[8 * i..8 * i + (lhs.len() - 8 * len1)]);
-        rem += lhs.len() - 8 * len1;
-        if rem == 0 {
-            out[k..k + rhs.len() - 8 * j].copy_from_slice(&rhs[8 * j..(8 * j) + rhs.len() - 8 * j]);
-            k += rhs.len() - 8 * j;
-        } else {
-            buffer[..rem as usize].sort_unstable();
-            rem = xor_slice(&mut buffer[..rem]);
-            k += xor_array_walk_mut(
-                &buffer[..rem],
-                &rhs[8 * j..(8 * j) + rhs.len() - 8 * j],
-                &mut out[k..],
-            );
-        }
+
+    let (tail_a, tail_b, tail_len) = if i == len1 {
+        (&lhs[8 * i..], &rhs[8 * j..], lhs.len() - 8 * len1)
     } else {
-        buffer[rem..rhs.len() - 8 * len2 + rem]
-            .copy_from_slice(&rhs[8 * j..8 * j + (rhs.len() - 8 * len2)]);
-        rem += rhs.len() - 8 * len2;
-        if rem == 0 {
-            out[k..k + (lhs.len() - 8 * i)]
-                .copy_from_slice(&lhs[8 * i..(8 * i) + lhs.len() - 8 * i]);
-            k += lhs.len() - 8 * i;
-        } else {
-            buffer[..rem as usize].sort_unstable();
-            rem = xor_slice(&mut buffer[..rem]);
-            k += xor_array_walk_mut(
-                &buffer[..rem],
-                &lhs[8 * i..(8 * i) + lhs.len() - 8 * i],
-                &mut out[k..],
-            );
+        (&rhs[8 * j..], &lhs[8 * i..], rhs.len() - 8 * len2)
+    };
+
+    buffer[rem..rem + tail_len].copy_from_slice(tail_a);
+    rem += tail_len;
+
+    if rem == 0 {
+        visitor.visit_slice(tail_b)
+    } else {
+        buffer[..rem as usize].sort_unstable();
+        rem = xor_slice(&mut buffer[..rem]);
+        xor_array_walk(&buffer[..rem], tail_b, visitor);
+    }
+}
+
+pub fn xor_array_walk(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisitor) {
+    use std::cmp::Ordering;
+    // Traverse both arrays
+    let mut i = 0;
+    let mut j = 0;
+    while i < lhs.len() && j < rhs.len() {
+        let a = unsafe { lhs.get_unchecked(i) };
+        let b = unsafe { rhs.get_unchecked(j) };
+        match a.cmp(b) {
+            Ordering::Less => {
+                visitor.visit_scalar(*a);
+                i += 1;
+            }
+            Ordering::Greater => {
+                visitor.visit_scalar(*b);
+                j += 1;
+            }
+            Ordering::Equal => {
+                i += 1;
+                j += 1;
+            }
         }
     }
 
-    out.truncate(k);
-    out
+    visitor.visit_slice(&lhs[i..]);
+    visitor.visit_slice(&rhs[j..]);
 }

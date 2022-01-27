@@ -5,6 +5,7 @@ use crate::bitmap::store::array::{
     intersect_skewed_large_unchecked, intersect_skewed_small_unchecked, sub_walk,
 };
 
+use crate::bitmap::store::array_store::visitor::BinaryOpWriter;
 use std::cmp::Ordering::*;
 use std::convert::{TryFrom, TryInto};
 use std::fmt::{Display, Formatter};
@@ -313,7 +314,80 @@ impl BitXorAssign<&Self> for ArrayStore {
     }
 }
 
-// Impls
+pub mod visitor {
+    use crate::bitmap::store::array::simd::{store, unique_swizzle};
+    use core_simd::{mask16x8, u16x8};
+
+    pub trait ArrayBinaryOperationVisitor {
+        fn visit_vector(&mut self, value: u16x8, mask: u8);
+        fn visit_scalar(&mut self, value: u16);
+        fn visit_slice(&mut self, values: &[u16]);
+    }
+
+    pub struct BinaryOpWriter {
+        inner: Vec<u16>,
+        index: usize,
+    }
+
+    impl BinaryOpWriter {
+        pub fn new(len: usize) -> BinaryOpWriter {
+            let inner = vec![0; len];
+            let index = 0;
+            BinaryOpWriter { inner, index }
+        }
+
+        pub fn into_inner(mut self) -> Vec<u16> {
+            self.inner.truncate(self.index);
+            self.inner
+        }
+    }
+
+    impl ArrayBinaryOperationVisitor for BinaryOpWriter {
+        fn visit_vector(&mut self, value: u16x8, mask: u8) {
+            let result = unique_swizzle(value, mask);
+            store(result, &mut self.inner[self.index..]);
+            self.index += mask.count_ones() as usize;
+        }
+
+        fn visit_scalar(&mut self, value: u16) {
+            self.inner[self.index] = value;
+            self.index += 1;
+        }
+
+        fn visit_slice(&mut self, values: &[u16]) {
+            self.inner[self.index..self.index + values.len()].copy_from_slice(values);
+            self.index += values.len();
+        }
+    }
+
+    pub struct CardinalityCounter {
+        count: usize,
+    }
+
+    impl CardinalityCounter {
+        pub fn new() -> CardinalityCounter {
+            CardinalityCounter { count: 0 }
+        }
+
+        pub fn into_inner(self) -> usize {
+            self.count
+        }
+    }
+
+    impl ArrayBinaryOperationVisitor for CardinalityCounter {
+        fn visit_vector(&mut self, _value: u16x8, mask: u8) {
+            self.count += mask.count_ones() as usize;
+        }
+
+        fn visit_scalar(&mut self, _value: u16) {
+            self.count += 1;
+        }
+
+        fn visit_slice(&mut self, values: &[u16]) {
+            self.count += values.len();
+        }
+    }
+}
 
 // #[inline]
 fn or_array_array(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
@@ -341,8 +415,16 @@ pub fn or_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
 }
 
 pub fn or_assign_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
-    let mut vec = super::array::simd::or(lhs.as_slice(), rhs.as_slice());
-    std::mem::swap(&mut lhs.vec, &mut vec);
+    let mut writer = visitor::BinaryOpWriter::new(lhs.vec.len() + rhs.vec.len());
+    super::array::simd::or(lhs.as_slice(), rhs.as_slice(), &mut writer);
+    let mut buf = writer.into_inner();
+
+    let mut counter = visitor::CardinalityCounter::new();
+    super::array::simd::or(lhs.as_slice(), rhs.as_slice(), &mut counter);
+    let count = counter.into_inner();
+
+    assert_eq!(count, buf.len());
+    std::mem::swap(&mut lhs.vec, &mut buf);
 }
 
 //#[inline(never)]
@@ -435,7 +517,9 @@ pub fn and_assign_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
     } else if rhs.vec.len() * THRESHOLD < lhs.vec.len() {
         intersect_skewed_large_unchecked(rhs.as_slice(), &mut lhs.vec);
     } else {
-        let mut vec = super::array::simd::and(lhs.as_slice(), rhs.as_slice());
+        let mut visitor = BinaryOpWriter::new(lhs.vec.len().max(rhs.vec.len()));
+        super::array::simd::and(lhs.as_slice(), rhs.as_slice(), &mut visitor);
+        let mut vec = visitor.into_inner();
         std::mem::swap(&mut lhs.vec, &mut vec);
     }
 }
@@ -464,7 +548,9 @@ pub fn sub_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
 }
 
 pub fn sub_assign_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
-    let mut vec = super::array::simd::sub(lhs.as_slice(), rhs.as_slice());
+    let mut visitor = BinaryOpWriter::new(lhs.vec.len());
+    super::array::simd::sub(lhs.as_slice(), rhs.as_slice(), &mut visitor);
+    let mut vec = visitor.into_inner();
     std::mem::swap(&mut lhs.vec, &mut vec);
 }
 
@@ -548,7 +634,9 @@ pub fn xor_simd(lhs: &ArrayStore, rhs: &ArrayStore) -> ArrayStore {
 }
 
 pub fn xor_assign_simd(lhs: &mut ArrayStore, rhs: &ArrayStore) {
-    let mut vec = super::array::simd::xor(lhs.as_slice(), rhs.as_slice());
+    let mut visitor = BinaryOpWriter::new(lhs.vec.len() + rhs.vec.len());
+    super::array::simd::xor(lhs.as_slice(), rhs.as_slice(), &mut visitor);
+    let mut vec = visitor.into_inner();
     std::mem::swap(&mut lhs.vec, &mut vec);
 }
 

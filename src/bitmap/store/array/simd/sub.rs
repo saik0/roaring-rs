@@ -1,23 +1,20 @@
 use crate::bitmap::store::array::simd::{load, matrix_cmp, store, unique_swizzle};
 use crate::bitmap::store::array::sub_walk_mut;
+use crate::bitmap::store::array_store::visitor::ArrayBinaryOperationVisitor;
 use core_simd::{u16x8, Simd};
 use std::mem;
 
-pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
-    const VECTOR_LENGTH: usize = mem::size_of::<u16x8>() / mem::size_of::<u16>();
-
+pub fn sub(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisitor) {
     // we handle the degenerate cases
     if lhs.is_empty() {
-        return Vec::new();
+        return;
     } else if rhs.is_empty() {
-        return lhs.to_vec();
+        visitor.visit_slice(lhs);
+        return;
     }
 
-    let mut out = vec![0; lhs.len().max(rhs.len())];
-    let mut k = 0;
-
-    let st_a = (lhs.len() / VECTOR_LENGTH) * VECTOR_LENGTH;
-    let st_b = (rhs.len() / VECTOR_LENGTH) * VECTOR_LENGTH;
+    let st_a = (lhs.len() / u16x8::LANES) * u16x8::LANES;
+    let st_b = (rhs.len() / u16x8::LANES) * u16x8::LANES;
 
     let mut i = 0;
     let mut j = 0;
@@ -33,17 +30,15 @@ pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
             let a_found_in_b: u8 = matrix_cmp(v_a, v_b).to_bitmask()[0];
             runningmask_a_found_in_b |= a_found_in_b;
             // we always compare the last values of A and B
-            let a_max: u16 = lhs[i + VECTOR_LENGTH - 1];
-            let b_max: u16 = rhs[j + VECTOR_LENGTH - 1];
+            let a_max: u16 = lhs[i + u16x8::LANES - 1];
+            let b_max: u16 = rhs[j + u16x8::LANES - 1];
             if a_max <= b_max {
                 // Ok. In this code path, we are ready to write our v_a
                 // because there is no need to read more from B, they will
                 // all be large values.
                 let bitmask_belongs_to_difference = runningmask_a_found_in_b ^ 0xFF;
-                let difference: u16x8 = unique_swizzle(v_a, bitmask_belongs_to_difference);
-                store(difference, &mut out[k..]);
-                k += bitmask_belongs_to_difference.count_ones() as usize;
-                i += VECTOR_LENGTH;
+                visitor.visit_vector(v_a, bitmask_belongs_to_difference);
+                i += u16x8::LANES;
                 if i == st_a {
                     break;
                 }
@@ -52,7 +47,7 @@ pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
             }
             if b_max <= a_max {
                 // in this code path, the current v_b has become useless
-                j += VECTOR_LENGTH;
+                j += u16x8::LANES;
                 if j == st_b {
                     break;
                 }
@@ -73,16 +68,36 @@ pub fn sub(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
             let a_found_in_b: u8 = matrix_cmp(v_a, v_b).to_bitmask()[0];
             runningmask_a_found_in_b |= a_found_in_b;
             let bitmask_belongs_to_difference: u8 = runningmask_a_found_in_b ^ 0xFF;
-            let difference: u16x8 = unique_swizzle(v_a, bitmask_belongs_to_difference);
-            store(difference, &mut out[k..]);
-            k += bitmask_belongs_to_difference.count_ones() as usize;
-            i += VECTOR_LENGTH;
+            visitor.visit_vector(v_a, bitmask_belongs_to_difference);
+            i += u16x8::LANES;
         }
     }
 
     // do the tail using scalar code
-    k += sub_walk_mut(&lhs[i..], &rhs[j..], &mut out[k..]);
+    sub_walk(&lhs[i..], &rhs[j..], visitor);
+}
 
-    out.truncate(k);
-    out
+fn sub_walk(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisitor) {
+    use std::cmp::Ordering;
+    // Traverse both arrays
+    let mut i = 0;
+    let mut j = 0;
+    while i < lhs.len() && j < rhs.len() {
+        let a = unsafe { lhs.get_unchecked(i) };
+        let b = unsafe { rhs.get_unchecked(j) };
+        match a.cmp(b) {
+            Ordering::Less => {
+                visitor.visit_scalar(*a);
+                i += 1;
+            }
+            Ordering::Greater => j += 1,
+            Ordering::Equal => {
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+
+    // Store remaining elements of the left array
+    visitor.visit_slice(&lhs[i..]);
 }
