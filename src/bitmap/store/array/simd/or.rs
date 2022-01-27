@@ -1,35 +1,6 @@
-use std::cmp::Ordering;
-
 use crate::bitmap::store::array::simd::{load, simd_merge, store, unique_swizzle, Shr1};
-use crate::bitmap::store::array_store::visitor::ArrayBinaryOperationVisitor;
+use crate::bitmap::store::array::{or_array_walk, ArrayBinaryOperationVisitor};
 use core_simd::{u16x8, Simd, Swizzle2};
-
-#[inline]
-#[allow(dead_code)]
-fn get_debug_asserted<T>(slice: &[T], index: usize) -> T
-where
-    T: Copy,
-{
-    debug_assert!(index < slice.len());
-    unsafe { *slice.get_unchecked(index) }
-}
-
-#[inline]
-#[allow(dead_code)]
-fn get_checked<T>(slice: &[T], index: usize) -> T
-where
-    T: Copy,
-{
-    slice[index]
-}
-
-#[inline]
-fn get_idx<T>(slice: &[T], index: usize) -> T
-where
-    T: Copy,
-{
-    get_debug_asserted(slice, index)
-}
 
 /// De-duplicates `slice` in place
 /// Returns the end index of the deduplicated slice.
@@ -37,8 +8,8 @@ where
 fn dedup(slice: &mut [u16]) -> usize {
     let mut pos: usize = 1;
     for i in 1..slice.len() {
-        if get_idx(slice, i) != get_idx(slice, i - 1) {
-            slice[pos] = get_idx(slice, i);
+        if slice[i] != slice[i - 1] {
+            slice[pos] = slice[i];
             pos += 1;
         }
     }
@@ -72,8 +43,8 @@ pub fn or(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisit
     let mut v_prev: u16x8 = v_min;
     if (i < len1) && (j < len2) {
         let mut v: u16x8;
-        let mut cur_a: u16 = get_idx(lhs, 8 * i);
-        let mut cur_b: u16 = get_idx(rhs, 8 * j);
+        let mut cur_a: u16 = lhs[8 * i];
+        let mut cur_b: u16 = rhs[8 * j];
         loop {
             if cur_a <= cur_b {
                 v = load(&lhs[8 * i..]);
@@ -129,36 +100,5 @@ pub fn or(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisit
         buffer[..rem as usize].sort_unstable();
         rem = dedup(&mut buffer[..rem]);
         or_array_walk(&buffer[..rem], tail_b, visitor);
-    }
-}
-
-fn or_array_walk(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisitor) {
-    // Traverse both arrays
-    let mut i = 0;
-    let mut j = 0;
-    while i < lhs.len() && j < rhs.len() {
-        let a = lhs[i];
-        let b = rhs[j];
-        match a.cmp(&b) {
-            Ordering::Less => {
-                visitor.visit_scalar(a);
-                i += 1;
-            }
-            Ordering::Greater => {
-                visitor.visit_scalar(b);
-                j += 1;
-            }
-            Ordering::Equal => {
-                visitor.visit_scalar(a);
-                i += 1;
-                j += 1;
-            }
-        }
-    }
-
-    if i < lhs.len() {
-        visitor.visit_slice(&lhs[i..]);
-    } else if j < rhs.len() {
-        visitor.visit_slice(&rhs[j..]);
     }
 }

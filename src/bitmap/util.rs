@@ -1,5 +1,3 @@
-#![allow(dead_code)] // TODO address this (exponential search)
-
 use std::ops::{Bound, RangeBounds, RangeInclusive};
 
 /// Returns the container key and the index

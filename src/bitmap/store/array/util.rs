@@ -1,171 +1,145 @@
 #![allow(dead_code)] // TODO only keep the impls that win the benchmarks
 
 use std::cmp::Ordering;
-use std::cmp::Ordering::{Equal, Greater, Less};
-use std::ptr;
+use std::cmp::Ordering::*;
 
-pub fn or_array_walk(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
-    let mut vec = Vec::new();
+use crate::bitmap::store::array::simd::{store, unique_swizzle};
+use core_simd::u16x8;
 
+pub trait ArrayBinaryOperationVisitor {
+    fn visit_vector(&mut self, value: u16x8, mask: u8);
+    fn visit_scalar(&mut self, value: u16);
+    fn visit_slice(&mut self, values: &[u16]);
+}
+
+pub struct VecVisitor {
+    inner: Vec<u16>,
+    index: usize,
+}
+
+impl VecVisitor {
+    pub fn new(len: usize) -> VecVisitor {
+        let inner = vec![0; len];
+        let index = 0;
+        VecVisitor { inner, index }
+    }
+
+    pub fn into_inner(mut self) -> Vec<u16> {
+        self.inner.truncate(self.index);
+        self.inner
+    }
+}
+
+impl ArrayBinaryOperationVisitor for VecVisitor {
+    fn visit_vector(&mut self, value: u16x8, mask: u8) {
+        let result = unique_swizzle(value, mask);
+        store(result, &mut self.inner[self.index..]);
+        self.index += mask.count_ones() as usize;
+    }
+
+    fn visit_scalar(&mut self, value: u16) {
+        self.inner[self.index] = value;
+        self.index += 1;
+    }
+
+    fn visit_slice(&mut self, values: &[u16]) {
+        self.inner[self.index..self.index + values.len()].copy_from_slice(values);
+        self.index += values.len();
+    }
+}
+
+pub struct CardinalityCounter {
+    count: usize,
+}
+
+impl CardinalityCounter {
+    pub fn new() -> CardinalityCounter {
+        CardinalityCounter { count: 0 }
+    }
+
+    pub fn into_inner(self) -> usize {
+        self.count
+    }
+}
+
+impl ArrayBinaryOperationVisitor for CardinalityCounter {
+    fn visit_vector(&mut self, _value: u16x8, mask: u8) {
+        self.count += mask.count_ones() as usize;
+    }
+
+    fn visit_scalar(&mut self, _value: u16) {
+        self.count += 1;
+    }
+
+    fn visit_slice(&mut self, values: &[u16]) {
+        self.count += values.len();
+    }
+}
+
+pub fn or_array_walk(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisitor) {
     // Traverse both arrays
     let mut i = 0;
     let mut j = 0;
     while i < lhs.len() && j < rhs.len() {
         let a = unsafe { lhs.get_unchecked(i) };
         let b = unsafe { rhs.get_unchecked(j) };
-        match a.cmp(b) {
-            Less => {
-                vec.push(*a);
-                i += 1
-            }
-            Greater => {
-                vec.push(*b);
-                j += 1
-            }
-            Equal => {
-                vec.push(*a);
-                i += 1;
-                j += 1;
-            }
-        }
-    }
-
-    vec.extend_from_slice(&lhs[i..]);
-    vec.extend_from_slice(&rhs[j..]);
-
-    vec
-}
-
-pub fn or_array_walk_mut_checked(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
-    assert!(out.len() >= lhs.len());
-    assert!(out.len() >= rhs.len());
-    // Traverse both arrays
-    let mut i = 0;
-    let mut j = 0;
-    let mut k = 0;
-    while i < lhs.len() && j < rhs.len() {
-        let a = lhs[i];
-        let b = rhs[j];
         match a.cmp(&b) {
             Less => {
-                out[k] = a;
+                visitor.visit_scalar(*a);
                 i += 1;
             }
             Greater => {
-                out[k] = b;
+                visitor.visit_scalar(*b);
                 j += 1;
             }
             Equal => {
-                out[k] = a;
+                visitor.visit_scalar(*a);
                 i += 1;
                 j += 1;
             }
         }
-        k += 1;
     }
 
     if i < lhs.len() {
-        let n = lhs.len() - i;
-        out[k..k + n].copy_from_slice(&lhs[i..]);
-        k += n;
+        visitor.visit_slice(&lhs[i..]);
     } else if j < rhs.len() {
-        let n = rhs.len() - j;
-        out[k..k + n].copy_from_slice(&rhs[j..]);
-        k += n;
+        visitor.visit_slice(&rhs[j..]);
     }
-
-    k
-}
-
-pub fn or_array_walk_mut_unchecked(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
-    debug_assert!(out.len() >= lhs.len());
-    debug_assert!(out.len() >= rhs.len());
-    // Traverse both arrays
-    let mut i = 0;
-    let mut j = 0;
-    let mut k = 0;
-    while i < lhs.len() && j < rhs.len() {
-        debug_assert!(k < out.len());
-        let a = unsafe { lhs.get_unchecked(i) };
-        let b = unsafe { rhs.get_unchecked(j) };
-        match a.cmp(b) {
-            Less => {
-                unsafe { *out.get_unchecked_mut(k) = *a }
-                i += 1;
-            }
-            Greater => {
-                unsafe { *out.get_unchecked_mut(k) = *b }
-                j += 1;
-            }
-            Equal => {
-                unsafe { *out.get_unchecked_mut(k) = *a }
-                i += 1;
-                j += 1;
-            }
-        }
-        k += 1;
-    }
-
-    let n = lhs.len() - i;
-    unsafe { ptr::copy_nonoverlapping(lhs.as_ptr().add(i), out.as_mut_ptr().add(k), n) }
-    k += n;
-
-    let n = rhs.len() - j;
-    unsafe { ptr::copy_nonoverlapping(rhs.as_ptr().add(j), out.as_mut_ptr().add(k), n) }
-    k += n;
-
-    k
 }
 
 #[inline]
-pub fn or_array_walk_mut(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
-    or_array_walk_mut_unchecked(lhs, rhs, out)
-}
-
-pub fn xor_array_walk_mut(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
-    // Traverse both arrays
+pub fn and_array_walk(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisitor) {
     let mut i = 0;
     let mut j = 0;
-    let mut k = 0;
     while i < lhs.len() && j < rhs.len() {
         let a = unsafe { lhs.get_unchecked(i) };
         let b = unsafe { rhs.get_unchecked(j) };
         match a.cmp(b) {
             Less => {
-                out[k] = *a;
                 i += 1;
-                k += 1;
             }
             Greater => {
-                out[k] = *b;
                 j += 1;
-                k += 1;
             }
             Equal => {
+                visitor.visit_scalar(*a);
                 i += 1;
                 j += 1;
             }
         }
     }
-
-    if i < lhs.len() {
-        let n = lhs.len() - i;
-        out[k..k + n].copy_from_slice(&lhs[i..]);
-        k += n;
-    } else if j < rhs.len() {
-        let n = rhs.len() - j;
-        out[k..k + n].copy_from_slice(&rhs[j..]);
-        k += n;
-    }
-
-    k
 }
 
-// #[inline(never)]
 pub fn and_assign_walk(lhs: &mut Vec<u16>, rhs: &[u16]) {
+    if lhs.is_empty() || rhs.is_empty() {
+        lhs.clear();
+        return;
+    }
+
     let mut i = 0;
     let mut j = 0;
     let mut k = 0;
+
     while i < lhs.len() && j < rhs.len() {
         let a = unsafe { lhs.get_unchecked(i) };
         let b = unsafe { rhs.get_unchecked(j) };
@@ -177,7 +151,9 @@ pub fn and_assign_walk(lhs: &mut Vec<u16>, rhs: &[u16]) {
                 j += 1;
             }
             Equal => {
-                lhs[k] = *a;
+                unsafe {
+                    *lhs.get_unchecked_mut(k) = *lhs.get_unchecked(i);
+                }
                 i += 1;
                 j += 1;
                 k += 1;
@@ -186,64 +162,6 @@ pub fn and_assign_walk(lhs: &mut Vec<u16>, rhs: &[u16]) {
     }
 
     lhs.truncate(k);
-}
-
-#[inline]
-fn _and_assign_walk_mut_checked(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
-    let mut i = 0;
-    let mut j = 0;
-    let mut k = 0;
-    while i < lhs.len() && j < rhs.len() {
-        let a = unsafe { lhs.get_unchecked(i) };
-        let b = unsafe { rhs.get_unchecked(j) };
-        match a.cmp(b) {
-            Less => {
-                i += 1;
-            }
-            Greater => {
-                j += 1;
-            }
-            Equal => {
-                unsafe { *out.get_unchecked_mut(k) = *a };
-                i += 1;
-                j += 1;
-                k += 1;
-            }
-        }
-    }
-
-    k
-}
-
-#[inline]
-fn _and_assign_walk_mut_unchecked(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
-    let mut i = 0;
-    let mut j = 0;
-    let mut k = 0;
-    while i < lhs.len() && j < rhs.len() {
-        let a = unsafe { lhs.get_unchecked(i) };
-        let b = unsafe { rhs.get_unchecked(j) };
-        match a.cmp(b) {
-            Less => {
-                i += 1;
-            }
-            Greater => {
-                j += 1;
-            }
-            Equal => {
-                unsafe { *out.get_unchecked_mut(k) = *a };
-                i += 1;
-                j += 1;
-                k += 1;
-            }
-        }
-    }
-
-    k
-}
-
-pub fn and_assign_walk_mut(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
-    _and_assign_walk_mut_unchecked(lhs, rhs, out)
 }
 
 //#[inline(never)]
@@ -767,9 +685,7 @@ pub fn and_assign_opt_unchecked(lhs: &mut Vec<u16>, rhs: &[u16]) {
     }
 }
 
-pub fn sub_walk(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
-    let mut vec = Vec::new();
-
+pub fn sub_walk(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisitor) {
     // Traverse both arrays
     let mut i = 0;
     let mut j = 0;
@@ -778,7 +694,7 @@ pub fn sub_walk(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
         let b = unsafe { rhs.get_unchecked(j) };
         match a.cmp(b) {
             Less => {
-                vec.push(*a);
+                visitor.visit_scalar(*a);
                 i += 1;
             }
             Greater => j += 1,
@@ -790,28 +706,25 @@ pub fn sub_walk(lhs: &[u16], rhs: &[u16]) -> Vec<u16> {
     }
 
     // Store remaining elements of the left array
-    vec.extend_from_slice(&lhs[i..]);
-
-    vec
+    visitor.visit_slice(&lhs[i..]);
 }
 
-pub fn sub_walk_mut(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
+pub fn xor_array_walk(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisitor) {
     // Traverse both arrays
     let mut i = 0;
     let mut j = 0;
-    let mut k = 0;
     while i < lhs.len() && j < rhs.len() {
         let a = unsafe { lhs.get_unchecked(i) };
         let b = unsafe { rhs.get_unchecked(j) };
         match a.cmp(b) {
             Less => {
-                unsafe {
-                    *out.get_unchecked_mut(k) = *a;
-                }
+                visitor.visit_scalar(*a);
                 i += 1;
-                k += 1;
             }
-            Greater => j += 1,
+            Greater => {
+                visitor.visit_scalar(*b);
+                j += 1;
+            }
             Equal => {
                 i += 1;
                 j += 1;
@@ -819,14 +732,8 @@ pub fn sub_walk_mut(lhs: &[u16], rhs: &[u16], out: &mut [u16]) -> usize {
         }
     }
 
-    // Store remaining elements of the left array
-    if i < lhs.len() {
-        let n = lhs.len() - i;
-        out[k..k + n].copy_from_slice(&lhs[i..]);
-        k += n;
-    }
-
-    k
+    visitor.visit_slice(&lhs[i..]);
+    visitor.visit_slice(&rhs[j..]);
 }
 
 #[inline]

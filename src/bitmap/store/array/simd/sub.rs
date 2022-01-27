@@ -1,8 +1,6 @@
-use crate::bitmap::store::array::simd::{load, matrix_cmp, store, unique_swizzle};
-use crate::bitmap::store::array::sub_walk_mut;
-use crate::bitmap::store::array_store::visitor::ArrayBinaryOperationVisitor;
+use crate::bitmap::store::array::simd::{load, matrix_cmp};
+use crate::bitmap::store::array::{sub_walk, ArrayBinaryOperationVisitor};
 use core_simd::{u16x8, Simd};
-use std::mem;
 
 pub fn sub(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisitor) {
     // we handle the degenerate cases
@@ -21,8 +19,8 @@ pub fn sub(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisi
     if (i < st_a) && (j < st_b) {
         let mut v_a: u16x8 = load(&lhs[i..]);
         let mut v_b: u16x8 = load(&rhs[j..]);
-        // we have a runningmask which indicates which values from A have been
-        // spotted in B, these don't get written out.
+        // we have a running mask which indicates which values from a have been
+        // spotted in b, these don't get written out.
         let mut runningmask_a_found_in_b: u8 = 0;
         loop {
             // a_found_in_b will contain a mask indicate for each entry in A
@@ -75,29 +73,4 @@ pub fn sub(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisi
 
     // do the tail using scalar code
     sub_walk(&lhs[i..], &rhs[j..], visitor);
-}
-
-fn sub_walk(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisitor) {
-    use std::cmp::Ordering;
-    // Traverse both arrays
-    let mut i = 0;
-    let mut j = 0;
-    while i < lhs.len() && j < rhs.len() {
-        let a = unsafe { lhs.get_unchecked(i) };
-        let b = unsafe { rhs.get_unchecked(j) };
-        match a.cmp(b) {
-            Ordering::Less => {
-                visitor.visit_scalar(*a);
-                i += 1;
-            }
-            Ordering::Greater => j += 1,
-            Ordering::Equal => {
-                i += 1;
-                j += 1;
-            }
-        }
-    }
-
-    // Store remaining elements of the left array
-    visitor.visit_slice(&lhs[i..]);
 }

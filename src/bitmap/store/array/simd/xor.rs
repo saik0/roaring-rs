@@ -1,6 +1,5 @@
 use crate::bitmap::store::array::simd::{load, simd_merge, store, unique_swizzle, Shr1, Shr2};
-use crate::bitmap::store::array::xor_array_walk_mut;
-use crate::bitmap::store::array_store::visitor::ArrayBinaryOperationVisitor;
+use crate::bitmap::store::array::{xor_array_walk, ArrayBinaryOperationVisitor};
 use core_simd::{mask16x8, u16x8, Simd, Swizzle2};
 
 // write vector new, while omitting repeated values assuming that previously
@@ -120,32 +119,4 @@ pub fn xor(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisi
         rem = xor_slice(&mut buffer[..rem]);
         xor_array_walk(&buffer[..rem], tail_b, visitor);
     }
-}
-
-pub fn xor_array_walk(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisitor) {
-    use std::cmp::Ordering;
-    // Traverse both arrays
-    let mut i = 0;
-    let mut j = 0;
-    while i < lhs.len() && j < rhs.len() {
-        let a = unsafe { lhs.get_unchecked(i) };
-        let b = unsafe { rhs.get_unchecked(j) };
-        match a.cmp(b) {
-            Ordering::Less => {
-                visitor.visit_scalar(*a);
-                i += 1;
-            }
-            Ordering::Greater => {
-                visitor.visit_scalar(*b);
-                j += 1;
-            }
-            Ordering::Equal => {
-                i += 1;
-                j += 1;
-            }
-        }
-    }
-
-    visitor.visit_slice(&lhs[i..]);
-    visitor.visit_slice(&rhs[j..]);
 }

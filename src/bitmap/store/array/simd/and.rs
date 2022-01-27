@@ -1,15 +1,16 @@
+use crate::bitmap::store::array::{and_array_walk, ArrayBinaryOperationVisitor};
 use core_simd::u16x8;
 
 use crate::bitmap::store::array::simd::{load, matrix_cmp};
-use crate::bitmap::store::array_store::visitor::ArrayBinaryOperationVisitor;
-use std::mem;
 
-// From Schlegel et al., Fast Sorted-Set Intersection using SIMD Instructions
+// Ported from CRoaring and arXiv:1709.07821
+// Lemire et al, Roaring Bitmaps: Implementation of an Optimized Software Library
+// Prior work: Schlegel et al., Fast Sorted-Set Intersection using SIMD Instructions
 //
-// Impl note:
-// The x86 PCMPESTRM used in the paper has been replaced with a SIMD or-shift
-// While several more instructions, it is portable to many SIMD ISAs
-// Benchmarked on my hardware: the run time was comparable
+// Rust port notes:
+// The x86 PCMPESTRM instruction been replaced with a simple SIMD or-shift
+// While several more instructions, this is what is available through LLVM intrinsics
+// and is portable to other ISAs. The performance is comparable on x86.
 pub fn and(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisitor) {
     let st_a = (lhs.len() / u16x8::LANES) * u16x8::LANES;
     let st_b = (rhs.len() / u16x8::LANES) * u16x8::LANES;
@@ -23,12 +24,8 @@ pub fn and(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisi
             let mask = matrix_cmp(v_a, v_b).to_bitmask()[0];
             visitor.visit_vector(v_a, mask);
 
-            // Safety:
-            //  * Must be in bounds given i < st_a && j < st_b checks
-            // let a_max: u16 = lhs[i + VEC_LEN - 1];
-            // let b_max: u16 = rhs[j + VEC_LEN - 1];
-            let a_max: u16 = unsafe { *lhs.get_unchecked(i + u16x8::LANES - 1) };
-            let b_max: u16 = unsafe { *rhs.get_unchecked(j + u16x8::LANES - 1) };
+            let a_max: u16 = lhs[i + u16x8::LANES - 1];
+            let b_max: u16 = rhs[j + u16x8::LANES - 1];
             if a_max <= b_max {
                 i += u16x8::LANES;
                 if i == st_a {
@@ -47,30 +44,5 @@ pub fn and(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisi
     }
 
     // intersect the tail using scalar intersection
-    and_assign_walk(&lhs[i..], &rhs[j..], visitor);
-}
-
-#[inline]
-fn and_assign_walk(lhs: &[u16], rhs: &[u16], visitor: &mut impl ArrayBinaryOperationVisitor) {
-    use std::cmp::Ordering;
-
-    let mut i = 0;
-    let mut j = 0;
-    while i < lhs.len() && j < rhs.len() {
-        let a = unsafe { lhs.get_unchecked(i) };
-        let b = unsafe { rhs.get_unchecked(j) };
-        match a.cmp(b) {
-            Ordering::Less => {
-                i += 1;
-            }
-            Ordering::Greater => {
-                j += 1;
-            }
-            Ordering::Equal => {
-                visitor.visit_scalar(*a);
-                i += 1;
-                j += 1;
-            }
-        }
-    }
+    and_array_walk(&lhs[i..], &rhs[j..], visitor);
 }
