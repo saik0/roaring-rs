@@ -9,23 +9,11 @@ pub fn or(lhs: &[u16], rhs: &[u16], visitor: &mut impl BinaryOperationVisitor) {
     let mut i = 0;
     let mut j = 0;
     while i < lhs.len() && j < rhs.len() {
-        let a = unsafe { lhs.get_unchecked(i) };
-        let b = unsafe { rhs.get_unchecked(j) };
-        match a.cmp(b) {
-            Less => {
-                visitor.visit_scalar(*a);
-                i += 1;
-            }
-            Greater => {
-                visitor.visit_scalar(*b);
-                j += 1;
-            }
-            Equal => {
-                visitor.visit_scalar(*a);
-                i += 1;
-                j += 1;
-            }
-        }
+        let a = unsafe { *lhs.get_unchecked(i) };
+        let b = unsafe { *rhs.get_unchecked(j) };
+        visitor.visit_scalar(if a <= b { a } else { b });
+        i = if a <= b { i + 1 } else { i };
+        j = if a >= b { j + 1 } else { j };
     }
 
     // Store remaining elements of the arrays
