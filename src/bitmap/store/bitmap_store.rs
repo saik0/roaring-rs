@@ -1,5 +1,3 @@
-use std::borrow::Borrow;
-use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 use std::ops::{BitAndAssign, BitOrAssign, BitXorAssign, RangeInclusive, SubAssign};
 
@@ -12,6 +10,18 @@ pub struct BitmapStore {
     len: u64,
     bits: Box<[u64; BITMAP_LENGTH]>,
 }
+
+pub type BitmapIter<'a> = std::iter::FlatMap<
+    std::iter::Enumerate<std::iter::Copied<std::slice::Iter<'a, u64>>>,
+    BitsIterator,
+    fn((usize, u64)) -> BitsIterator,
+>;
+
+pub type BitmapIntoIter = std::iter::FlatMap<
+    std::iter::Enumerate<Box<std::array::IntoIter<u64, BITMAP_LENGTH>>>,
+    BitsIterator,
+    fn((usize, u64)) -> BitsIterator,
+>;
 
 impl BitmapStore {
     pub fn new() -> BitmapStore {
@@ -256,12 +266,12 @@ impl BitmapStore {
             .sum::<u64>()
     }
 
-    pub fn iter(&self) -> BitmapIter<&[u64; BITMAP_LENGTH]> {
-        BitmapIter::new(&self.bits)
+    pub fn iter(&self) -> BitmapIter {
+        self.bits.iter().copied().enumerate().flat_map(BitsIterator::new)
     }
 
-    pub fn into_iter(self) -> BitmapIter<Box<[u64; BITMAP_LENGTH]>> {
-        BitmapIter::new(self.bits)
+    pub fn into_iter(self) -> BitmapIntoIter {
+        Box::new(self.bits.into_iter()).enumerate().flat_map(BitsIterator::new)
     }
 
     pub fn as_array(&self) -> &[u64; BITMAP_LENGTH] {
@@ -307,68 +317,40 @@ impl Display for Error {
 
 impl std::error::Error for Error {}
 
-pub struct BitmapIter<B: Borrow<[u64; BITMAP_LENGTH]>> {
-    key: usize,
+pub struct BitsIterator {
+    key: u16,
     value: u64,
-    key_back: usize,
-    value_back: u64,
-    bits: B,
 }
 
-impl<B: Borrow<[u64; BITMAP_LENGTH]>> BitmapIter<B> {
-    fn new(bits: B) -> BitmapIter<B> {
-        BitmapIter {
-            key: 0,
-            value: bits.borrow()[0],
-            key_back: BITMAP_LENGTH - 1,
-            value_back: bits.borrow()[BITMAP_LENGTH - 1],
-            bits,
-        }
+impl BitsIterator {
+    pub fn new(args: (usize, u64)) -> Self {
+        Self { key: (args.0 * 64) as u16, value: args.1 }
     }
 }
 
-impl<B: Borrow<[u64; BITMAP_LENGTH]>> Iterator for BitmapIter<B> {
+impl Iterator for BitsIterator {
     type Item = u16;
 
-    fn next(&mut self) -> Option<u16> {
-        loop {
-            if self.value == 0 {
-                self.key += 1;
-                let cmp = self.key.cmp(&self.key_back);
-                // Match arms can be reordered, this ordering is perf sensitive
-                self.value = if cmp == Ordering::Less {
-                    unsafe { *self.bits.borrow().get_unchecked(self.key) }
-                } else if cmp == Ordering::Equal {
-                    self.value_back
-                } else {
-                    return None;
-                };
-                continue;
-            }
-            let index = self.value.trailing_zeros() as usize;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.value == 0 {
+            None
+        } else {
+            let index = self.value.trailing_zeros();
             self.value &= self.value - 1;
-            return Some((64 * self.key + index) as u16);
+            Some(self.key | index as u16)
         }
     }
 }
 
-impl<B: Borrow<[u64; BITMAP_LENGTH]>> DoubleEndedIterator for BitmapIter<B> {
+impl DoubleEndedIterator for BitsIterator {
     fn next_back(&mut self) -> Option<Self::Item> {
-        loop {
-            let value =
-                if self.key_back <= self.key { &mut self.value } else { &mut self.value_back };
-            if *value == 0 {
-                if self.key_back <= self.key {
-                    return None;
-                }
-                self.key_back -= 1;
-                self.value_back = unsafe { *self.bits.borrow().get_unchecked(self.key_back) };
-                continue;
-            }
-            let index_from_left = value.leading_zeros() as usize;
+        if self.value == 0 {
+            None
+        } else {
+            let index_from_left = self.value.leading_zeros();
             let index = 63 - index_from_left;
-            *value &= !(1 << index);
-            return Some((64 * self.key_back + index) as u16);
+            self.value &= !(1 << index);
+            Some(self.key | index as u16)
         }
     }
 }

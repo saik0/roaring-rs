@@ -7,11 +7,10 @@ use std::ops::{
 };
 use std::{slice, vec};
 
-use self::bitmap_store::BITMAP_LENGTH;
 use self::Store::{Array, Bitmap};
 
 pub use self::array_store::ArrayStore;
-pub use self::bitmap_store::{BitmapIter, BitmapStore};
+pub use self::bitmap_store::{BitmapIntoIter, BitmapIter, BitmapStore};
 
 #[derive(Clone)]
 pub enum Store {
@@ -22,8 +21,8 @@ pub enum Store {
 pub enum Iter<'a> {
     Array(slice::Iter<'a, u16>),
     Vec(vec::IntoIter<u16>),
-    BitmapBorrowed(BitmapIter<&'a [u64; BITMAP_LENGTH]>),
-    BitmapOwned(BitmapIter<Box<[u64; BITMAP_LENGTH]>>),
+    BitmapBorrowed(BitmapIter<'a>),
+    BitmapOwned(BitmapIntoIter),
 }
 
 impl Store {
