@@ -2,12 +2,12 @@ mod scalar;
 mod vector;
 mod visitor;
 
-use crate::bitmap::store::array_store::visitor::VecWriter;
+use crate::bitmap::store::array_store::visitor::{CardinalityCounter, VecWriter};
 use std::cmp::Ordering;
 use std::cmp::Ordering::*;
 use std::convert::{TryFrom, TryInto};
 use std::fmt::{Display, Formatter};
-use std::ops::{BitAnd, BitAndAssign, BitOr, BitXor, BitXorAssign, RangeInclusive, Sub, SubAssign};
+use std::ops::{BitAnd, BitAndAssign, BitOr, BitXor, RangeInclusive, Sub, SubAssign};
 
 use super::bitmap_store::{bit, key, BitmapStore, BITMAP_LENGTH};
 
@@ -150,6 +150,15 @@ impl ArrayStore {
                 },
             }
         }
+    }
+
+    pub fn intersection_len(&self, other: &Self) -> u64 {
+        let mut visitor = CardinalityCounter::new();
+        #[cfg(feature = "simd")]
+        vector::and(self.as_slice(), other.as_slice(), &mut visitor);
+        #[cfg(not(feature = "simd"))]
+        scalar::and(self.as_slice(), other.as_slice(), &mut visitor);
+        visitor.into_inner()
     }
 
     pub fn to_bitmap_store(&self) -> BitmapStore {
@@ -356,44 +365,6 @@ impl BitXor<Self> for &ArrayStore {
         #[cfg(not(feature = "simd"))]
         scalar::xor(self.as_slice(), rhs.as_slice(), &mut visitor);
         ArrayStore::from_vec_unchecked(visitor.into_inner())
-    }
-}
-
-impl BitXorAssign<&Self> for ArrayStore {
-    fn bitxor_assign(&mut self, rhs: &Self) {
-        #[cfg(feature = "simd")]
-        {
-            let mut visitor = VecWriter::new(self.vec.len().min(rhs.vec.len()));
-            vector::xor(self.as_slice(), rhs.as_slice(), &mut visitor);
-            self.vec = visitor.into_inner()
-        }
-        #[cfg(not(feature = "simd"))]
-        {
-            let mut i1 = 0usize;
-            let mut iter2 = rhs.vec.iter();
-            let mut current2 = iter2.next();
-            while i1 < self.vec.len() {
-                match current2.map(|c2| self.vec[i1].cmp(c2)) {
-                    None => break,
-                    Some(Less) => {
-                        i1 += 1;
-                    }
-                    Some(Greater) => {
-                        self.vec.insert(i1, *current2.unwrap());
-                        i1 += 1;
-                        current2 = iter2.next();
-                    }
-                    Some(Equal) => {
-                        self.vec.remove(i1);
-                        current2 = iter2.next();
-                    }
-                }
-            }
-            if let Some(current) = current2 {
-                self.vec.push(*current);
-                self.vec.extend(iter2.cloned());
-            }
-        }
     }
 }
 

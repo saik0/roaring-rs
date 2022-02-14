@@ -118,6 +118,15 @@ impl Store {
         }
     }
 
+    pub fn intersection_len(&self, other: &Self) -> u64 {
+        match (self, other) {
+            (Array(vec1), Array(vec2)) => vec1.intersection_len(vec2),
+            (Bitmap(bits1), Bitmap(bits2)) => bits1.intersection_len_bitmap(bits2),
+            (Array(vec), Bitmap(bits)) => bits.intersection_len_array(vec),
+            (Bitmap(bits), Array(vec)) => bits.intersection_len_array(vec),
+        }
+    }
+
     pub fn len(&self) -> u64 {
         match self {
             Array(vec) => vec.len(),
@@ -356,13 +365,12 @@ impl BitXor<&Store> for &Store {
 
 impl BitXorAssign<Store> for Store {
     fn bitxor_assign(&mut self, mut rhs: Store) {
-        // TODO improve this function
         match (self, &mut rhs) {
-            (&mut Array(ref mut vec1), &mut Array(ref mut vec2)) => {
-                BitXorAssign::bitxor_assign(vec1, vec2);
+            (&mut Array(ref mut vec1), &mut Array(ref vec2)) => {
+                *vec1 = BitXor::bitxor(&*vec1, vec2);
             }
-            (&mut Bitmap(ref mut bits1), &mut Array(ref mut vec2)) => {
-                BitXorAssign::bitxor_assign(bits1, &*vec2);
+            (&mut Bitmap(ref mut bits1), &mut Array(ref vec2)) => {
+                BitXorAssign::bitxor_assign(bits1, vec2);
             }
             (&mut Bitmap(ref mut bits1), &mut Bitmap(ref bits2)) => {
                 BitXorAssign::bitxor_assign(bits1, bits2);
@@ -379,7 +387,8 @@ impl BitXorAssign<&Store> for Store {
     fn bitxor_assign(&mut self, rhs: &Store) {
         match (self, rhs) {
             (&mut Array(ref mut vec1), &Array(ref vec2)) => {
-                BitXorAssign::bitxor_assign(vec1, vec2);
+                let this = mem::take(vec1);
+                *vec1 = BitXor::bitxor(&this, vec2);
             }
             (&mut Bitmap(ref mut bits1), &Array(ref vec2)) => {
                 BitXorAssign::bitxor_assign(bits1, vec2);
@@ -387,10 +396,10 @@ impl BitXorAssign<&Store> for Store {
             (&mut Bitmap(ref mut bits1), &Bitmap(ref bits2)) => {
                 BitXorAssign::bitxor_assign(bits1, bits2);
             }
-            (this @ &mut Array(..), &Bitmap(..)) => {
-                let mut new = rhs.clone();
-                BitXorAssign::bitxor_assign(&mut new, &*this);
-                *this = new;
+            (this @ &mut Array(..), &Bitmap(ref bits2)) => {
+                let mut lhs: Store = Bitmap(bits2.clone());
+                BitXorAssign::bitxor_assign(&mut lhs, &*this);
+                *this = lhs;
             }
         }
     }

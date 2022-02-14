@@ -8,152 +8,98 @@ use crate::bitmap::Pairs;
 use crate::RoaringBitmap;
 
 impl RoaringBitmap {
-    /// Unions in-place with the specified other bitmap.
+    /// Computes the len of the intersection with the specified other bitmap without creating a
+    /// new bitmap.
+    ///
+    /// This is faster and more space efficient when you're only interested in the cardinality of
+    /// the intersection.
     ///
     /// # Examples
     ///
     /// ```rust
     /// use roaring::RoaringBitmap;
     ///
-    /// let mut rb1: RoaringBitmap = (1..4).collect();
+    /// let rb1: RoaringBitmap = (1..4).collect();
     /// let rb2: RoaringBitmap = (3..5).collect();
-    /// let rb3: RoaringBitmap = (1..5).collect();
     ///
-    /// rb1 |= rb2;
     ///
-    /// assert_eq!(rb1, rb3);
+    /// assert_eq!(rb1.intersection_len(&rb2), (rb1 & rb2).len());
     /// ```
-    ///
-    /// Can also be done via the `BitOr` operator.
-    ///
-    /// ```rust
-    /// use roaring::RoaringBitmap;
-    ///
-    /// let mut rb1: RoaringBitmap = (1..4).collect();
-    /// let rb2: RoaringBitmap = (3..5).collect();
-    /// let rb3: RoaringBitmap = (1..5).collect();
-    ///
-    /// let rb1 = rb1 | rb2;
-    ///
-    /// assert_eq!(rb1, rb3);
-    /// ```
-    #[deprecated(
-        since = "0.6.7",
-        note = "Please use the `BitOrAssign::bitor_assign` (`|=`) ops method instead"
-    )]
-    pub fn union_with(&mut self, other: &RoaringBitmap) {
-        BitOrAssign::bitor_assign(self, other)
+    pub fn intersection_len(&self, other: &RoaringBitmap) -> u64 {
+        Pairs::new(&self.containers, &other.containers)
+            .map(|pair| match pair {
+                (Some(..), None) => 0,
+                (None, Some(..)) => 0,
+                (Some(lhs), Some(rhs)) => lhs.intersection_len(rhs),
+                (None, None) => 0,
+            })
+            .sum()
     }
 
-    /// Intersects in-place with the specified other bitmap.
+    /// Computes the len of the union with the specified other bitmap without creating a new bitmap.
+    ///
+    /// This is faster and more space efficient when you're only interested in the cardinality of
+    /// the union.
     ///
     /// # Examples
     ///
     /// ```rust
     /// use roaring::RoaringBitmap;
     ///
-    /// let mut rb1: RoaringBitmap = (1..4).collect();
+    /// let rb1: RoaringBitmap = (1..4).collect();
     /// let rb2: RoaringBitmap = (3..5).collect();
-    /// let rb3: RoaringBitmap = (3..4).collect();
     ///
-    /// rb1 &= rb2;
     ///
-    /// assert_eq!(rb1, rb3);
+    /// assert_eq!(rb1.union_len(&rb2), (rb1 | rb2).len());
     /// ```
-    ///
-    /// Can also be done via the `BitAnd` operator.
-    ///
-    /// ```rust
-    /// use roaring::RoaringBitmap;
-    ///
-    /// let mut rb1: RoaringBitmap = (1..4).collect();
-    /// let rb2: RoaringBitmap = (3..5).collect();
-    /// let rb3: RoaringBitmap = (3..4).collect();
-    ///
-    /// let rb1 = rb1 & rb2;
-    ///
-    /// assert_eq!(rb1, rb3);
-    /// ```
-    #[deprecated(
-        since = "0.6.7",
-        note = "Please use the `BitAndAssign::bitand_assign` (`&=`) ops method instead"
-    )]
-    pub fn intersect_with(&mut self, other: &RoaringBitmap) {
-        BitAndAssign::bitand_assign(self, other)
+    pub fn union_len(&self, other: &RoaringBitmap) -> u64 {
+        self.len().wrapping_add(other.len()).wrapping_sub(self.intersection_len(other))
     }
 
-    /// Removes all values in the specified other bitmap from self, in-place.
+    /// Computes the len of the difference with the specified other bitmap without creating a new
+    /// bitmap.
+    ///
+    /// This is faster and more space efficient when you're only interested in the cardinality of
+    /// the difference.
     ///
     /// # Examples
     ///
     /// ```rust
     /// use roaring::RoaringBitmap;
     ///
-    /// let mut rb1: RoaringBitmap = (1..4).collect();
+    /// let rb1: RoaringBitmap = (1..4).collect();
     /// let rb2: RoaringBitmap = (3..5).collect();
-    /// let rb3: RoaringBitmap = (1..3).collect();
     ///
-    /// rb1 -= rb2;
     ///
-    /// assert_eq!(rb1, rb3);
+    /// assert_eq!(rb1.difference_len(&rb2), (rb1 - rb2).len());
     /// ```
-    ///
-    /// Can also be done via the `Sub` operator.
-    ///
-    /// ```rust
-    /// use roaring::RoaringBitmap;
-    ///
-    /// let mut rb1: RoaringBitmap = (1..4).collect();
-    /// let rb2: RoaringBitmap = (3..5).collect();
-    /// let rb3: RoaringBitmap = (1..3).collect();
-    ///
-    /// let rb1 = rb1 - rb2;
-    ///
-    /// assert_eq!(rb1, rb3);
-    /// ```
-    #[deprecated(
-        since = "0.6.7",
-        note = "Please use the `SubAssign::sub_assign` (`-=`) ops method instead"
-    )]
-    pub fn difference_with(&mut self, other: &RoaringBitmap) {
-        SubAssign::sub_assign(self, other)
+    pub fn difference_len(&self, other: &RoaringBitmap) -> u64 {
+        self.len() - self.intersection_len(other)
     }
 
-    /// Replaces this bitmap with one that is equivalent to `self XOR other`.
+    /// Computes the len of the symmetric difference with the specified other bitmap without
+    /// creating a new bitmap.
+    ///
+    /// This is faster and more space efficient when you're only interested in the cardinality of
+    /// the symmetric difference.
     ///
     /// # Examples
     ///
     /// ```rust
     /// use roaring::RoaringBitmap;
     ///
-    /// let mut rb1: RoaringBitmap = (1..4).collect();
-    /// let rb2: RoaringBitmap = (3..6).collect();
-    /// let rb3: RoaringBitmap = (1..3).chain(4..6).collect();
+    /// let rb1: RoaringBitmap = (1..4).collect();
+    /// let rb2: RoaringBitmap = (3..5).collect();
     ///
-    /// rb1 ^= rb2;
     ///
-    /// assert_eq!(rb1, rb3);
+    /// assert_eq!(rb1.symmetric_difference_len(&rb2), (rb1 ^ rb2).len());
     /// ```
-    ///
-    /// Can also be done via the `BitXor` operator.
-    ///
-    /// ```rust
-    /// use roaring::RoaringBitmap;
-    ///
-    /// let mut rb1: RoaringBitmap = (1..4).collect();
-    /// let rb2: RoaringBitmap = (3..6).collect();
-    /// let rb3: RoaringBitmap = (1..3).chain(4..6).collect();
-    ///
-    /// let rb1 = rb1 ^ rb2;
-    ///
-    /// assert_eq!(rb1, rb3);
-    /// ```
-    #[deprecated(
-        since = "0.6.7",
-        note = "Please use the `BitXorAssign::bitxor_assign` (`^=`) ops method instead"
-    )]
-    pub fn symmetric_difference_with(&mut self, other: &RoaringBitmap) {
-        BitXorAssign::bitxor_assign(self, other)
+    pub fn symmetric_difference_len(&self, other: &RoaringBitmap) -> u64 {
+        let intersection_len = self.intersection_len(other);
+        self.len()
+            .wrapping_add(other.len())
+            .wrapping_sub(intersection_len)
+            .wrapping_sub(intersection_len)
     }
 }
 
@@ -489,6 +435,47 @@ impl BitXorAssign<&RoaringBitmap> for RoaringBitmap {
                 (None, Some(rhs)) => self.containers.push(rhs.clone()),
                 (None, None) => break,
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::RoaringBitmap;
+    use proptest::prelude::*;
+
+    // fast count tests
+    proptest! {
+        #[test]
+        fn union_len_eq_len_of_materialized_union(
+            a in RoaringBitmap::arbitrary(),
+            b in RoaringBitmap::arbitrary()
+        ) {
+            prop_assert_eq!(a.union_len(&b), (a | b).len());
+        }
+
+        #[test]
+        fn intersection_len_eq_len_of_materialized_intersection(
+            a in RoaringBitmap::arbitrary(),
+            b in RoaringBitmap::arbitrary()
+        ) {
+            prop_assert_eq!(a.intersection_len(&b), (a & b).len());
+        }
+
+        #[test]
+        fn difference_len_eq_len_of_materialized_difference(
+            a in RoaringBitmap::arbitrary(),
+            b in RoaringBitmap::arbitrary()
+        ) {
+            prop_assert_eq!(a.difference_len(&b), (a - b).len());
+        }
+
+        #[test]
+        fn symmetric_difference_len_eq_len_of_materialized_symmetric_difference(
+            a in RoaringBitmap::arbitrary(),
+            b in RoaringBitmap::arbitrary()
+        ) {
+            prop_assert_eq!(a.symmetric_difference_len(&b), (a ^ b).len());
         }
     }
 }
